@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intercity Pixel Train</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #140c1c; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas {
+    display: block;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<canvas id="screen" width="320" height="180"></canvas>
+<script>
+'use strict';
+
+// =====================================================================
+// 1. CONFIG
+// =====================================================================
+const W = 320, H = 180;                 // internal resolution
+
+const CONFIG = {
+  STEP: 1 / 60,                         // fixed simulation timestep (s)
+  MAX_FRAME: 0.25,                      // clamp long frames (tab switches)
+  FAST_FACTOR: 4,                       // hold F to fast-forward
+
+  CRUISE_SPEED: 80,                     // world px per second
+  ACCEL_TIME: 7,                        // s, 0 -> cruise
+  BRAKE_TIME: 6,                        // s, cruise -> 0 (nominal)
+  STOP_TIME: 4,                         // s waiting at a platform
+  STATION_SPACING: 2000,                // world px between stations
+
+  DAY_LENGTH: 180,                      // s for a full day/night cycle
+  START_DAY_TIME: 20,
+
+  TRAIN_FRONT_X: 273,                   // screen x of the headlight
+  LOCO_W: 46, CAR_W: 39, CAR_GAP: 2, CAR_COUNT: 5,
+  WHEEL_R: 3.5, WHEEL_FRAMES: 6,
+  PLATFORM_W: 280,
+  SMOKE_MAX: 70,
+
+  STATION_NAMES: ['KAMALAPUR', 'TONGI', 'NARSINGDI', 'BHAIRAB BAZAR', 'ASHUGANJ',
+                  'BRAHMANBARIA', 'AKHAURA', 'CUMILLA', 'LAKSAM', 'FENI', 'CHATTOGRAM'],
+};
+
+// Scroll speed of each parallax layer relative to the track
+const PARALLAX = { clouds: 0.05, far: 0.2, mid: 0.5, track: 1.0, fg: 1.3 };
+
+// Screen y where each layer / sprite is drawn
+const LAYER_Y = { clouds: 6, far: 84, mid: 92, poles: 92, platform: 100,
+                  track: 140, fg: 146, loco: 116, car: 121, wheel: 144 };
+
+// Time-of-day keyframes: [seconds, lighting]. Between two different
+// lightings the scene cross-fades with an ordered dither.
+const DAY_KEYS = [[0, 'day'], [70, 'day'], [80, 'dusk'], [92, 'dusk'], [102, 'night'],
+                  [150, 'night'], [160, 'dusk'], [166, 'dusk'], [176, 'day'], [180, 'day']];
+const HOLD_STARTS = [0, 80, 102, 160];  // T key jumps between these
+
+// =====================================================================
+// 2. PALETTE  (32 colours - nothing else ever reaches the screen)
+// =====================================================================
+const PALETTE = {
+  ink:      '#140c1c', navy:      '#1b1f3b', indigo:     '#2c2f5e', slate:     '#4a4f84',
+  purple:   '#6b4a7d', rose:      '#b85d6e', orange:     '#e8875a', peach:     '#f4c27a',
+  skyDeep:  '#3d7fc4', skyMid:    '#6aaee0', skyLight:   '#a8d8ef', white:     '#f4f4ec',
+  cloudShade:'#c4cedb', grayLight:'#9a9aa8', gray:       '#6c6c7a', grayDark:  '#43434f',
+  brownDark:'#3e2a22', brown:     '#6e4a32', tan:        '#b08a5c', cream:     '#ecdcae',
+  glow:     '#ffd65c', amber:     '#f0a030', red:        '#c23a30', rust:      '#8c4a3a',
+  greenDeep:'#12382a', greenDark: '#1e5a36', green:      '#2e7d3e', grass:     '#4f9a3c',
+  grassLight:'#86c04a', paddy:    '#c4c95a', haze:       '#4f7f6c', blue:      '#2a5a9c',
+};
+
+// Lighting never tints: each lighting remaps palette keys onto other
+// palette keys, and every sprite is pre-rendered once per lighting.
+// Light sources (lit windows, lamps, headlight) use PALETTE directly.
+const LIGHTING = {
+  day:   { lit: false, map: {} },
+  dusk:  { lit: true, map: {
+    slate: 'indigo', orange: 'rose', peach: 'orange',
+    skyDeep: 'slate', skyMid: 'purple', skyLight: 'rose', white: 'peach', cloudShade: 'rose',
+    grayLight: 'gray', gray: 'grayDark', grayDark: 'navy',
+    brownDark: 'ink', brown: 'brownDark', tan: 'rust', cream: 'peach', red: 'rust', rust: 'brown',
+    greenDeep: 'ink', greenDark: 'greenDeep', green: 'greenDark', grass: 'green',
+    grassLight: 'grass', paddy: 'tan', haze: 'slate', blue: 'indigo',
+  } },
+  night: { lit: true, map: {
+    navy: 'ink', indigo: 'navy', slate: 'indigo', purple: 'indigo', rose: 'purple',
+    orange: 'purple', peach: 'rose',
+    skyDeep: 'navy', skyMid: 'indigo', skyLight: 'slate', white: 'slate', cloudShade: 'indigo',
+    grayLight: 'slate', gray: 'indigo', grayDark: 'navy',
+    brownDark: 'ink', brown: 'navy', tan: 'purple', cream: 'slate', red: 'purple', rust: 'indigo',
+    greenDeep: 'ink', greenDark: 'greenDeep', green: 'greenDeep', grass: 'greenDeep',
+    grassLight: 'greenDark', paddy: 'greenDark', haze: 'navy', blue: 'indigo',
+  } },
+};
+
+// =====================================================================
+// 3. DRAWING HELPERS
+// =====================================================================
+const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+const bayer = (x, y) => BAYER4[((y & 3) << 2) | (x & 3)];
+
+// Small seeded RNG so every lighting variant gets an identical layout
+function mulberry32(seed) {
+  return function () {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const randInt = (rng, a, b) => a + Math.floor(rng() * (b - a + 1));
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  return [c, g];
+}
+
+function rect(g, x, y, w, h, col) {
+  g.fillStyle = col;
+  g.fillRect(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+}
+
+function px(g, x, y, col) {
+  g.fillStyle = col;
+  g.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+}
+
+// Filled pixel circle built from horizontal spans (no anti-aliasing)
+function disc(g, cx, cy, r, col) {
+  cx = Math.floor(cx); cy = Math.floor(cy);
+  g.fillStyle = col;
+  for (let dy = -r; dy <= r; dy++) {
+    const hw = Math.floor(Math.sqrt((r + 0.5) * (r + 0.5) - dy * dy));
+    g.fillRect(cx - hw, cy + dy, hw * 2 + 1, 1);
+  }
+}
+
+// Ordered-dither fill: paints pixels whose Bayer value is below level (0..16)
+function ditherRect(g, x, y, w, h, col, level) {
+  g.fillStyle = col;
+  for (let yy = y; yy < y + h; yy++)
+    for (let xx = x; xx < x + w; xx++)
+      if (bayer(xx, yy) < level) g.fillRect(xx, yy, 1, 1);
+}
+
+// Paint a character template: each char maps to a colour (or is skipped)
+function stamp(g, tpl, x, y, colors) {
+  for (let r = 0; r < tpl.length; r++)
+    for (let c = 0; c < tpl[r].length; c++) {
+      const col = colors[tpl[r][c]];
+      if (col) px(g, x + c, y + r, col);
+    }
+}
+
+// Run a draw call at -tw, 0 and +tw so shapes wrap across a tile seam
+function wrapX(tw, fn) { fn(-tw); fn(0); fn(tw); }
+
+// Repeat a pre-rendered tile across the screen at a scroll offset
+function drawTiled(g, tile, offset, y) {
+  const tw = tile.width;
+  for (let x = -(((Math.floor(offset) % tw) + tw) % tw); x < W; x += tw) g.drawImage(tile, x, y);
+}
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [n >> 16, (n >> 8) & 255, n & 255];
+}
+
+// 3x5 bitmap font (rows top to bottom) for the debug overlay and signs
+const FONT = {
+  ' ': '000 000 000 000 000', '.': '000 000 000 000 010', ':': '000 010 000 010 000',
+  '-': '000 000 111 000 000', '/': '001 001 010 100 100', '>': '100 010 001 010 100',
+  '0': '111 101 101 101 111', '1': '010 110 010 010 111', '2': '111 001 111 100 111',
+  '3': '111 001 011 001 111', '4': '101 101 111 001 001', '5': '111 100 111 001 111',
+  '6': '111 100 111 101 111', '7': '111 001 010 010 010', '8': '111 101 111 101 111',
+  '9': '111 101 111 001 111',
+  A: '010 101 111 101 101', B: '110 101 110 101 110', C: '011 100 100 100 011',
+  D: '110 101 101 101 110', E: '111 100 110 100 111', F: '111 100 110 100 100',
+  G: '011 100 101 101 011', H: '101 101 111 101 101', I: '111 010 010 010 111',
+  J: '001 001 001 101 010', K: '101 101 110 101 101', L: '100 100 100 100 111',
+  M: '101 111 111 101 101', N: '110 101 101 101 101', O: '010 101 101 101 010',
+  P: '110 101 110 100 100', Q: '010 101 101 110 011', R: '110 101 110 101 101',
+  S: '011 100 010 001 110', T: '111 010 010 010 010', U: '101 101 101 101 111',
+  V: '101 101 101 101 010', W: '101 101 111 111 101', X: '101 101 010 101 101',
+  Y: '101 101 010 010 010', Z: '111 001 010 100 111',
+};
+
+const glyphCache = new Map();
+function glyph(ch, col) {
+  const key = ch + col;
+  let c = glyphCache.get(key);
+  if (!c) {
+    const bits = (FONT[ch] || FONT[' ']).replace(/ /g, '');
+    let g;
+    [c, g] = makeCanvas(3, 5);
+    g.fillStyle = col;
+    for (let i = 0; i < 15; i++) if (bits[i] === '1') g.fillRect(i % 3, (i / 3) | 0, 1, 1);
+    glyphCache.set(key, c);
+  }
+  return c;
+}
+
+function drawText(g, str, x, y, col) {
+  str = String(str).toUpperCase();
+  for (let i = 0; i < str.length; i++)
+    if (str[i] !== ' ') g.drawImage(glyph(str[i], col), x + i * 4, y);
+}
+const textWidth = s => s.length * 4 - 1;
+
+// =====================================================================
+// 4. TRAIN
+// =====================================================================
+// Bangladeshi intercity rake: Bo-Bo diesel locomotive + 5 carriages,
+// heading right. The whole train stays fixed on screen.
+const TRAIN = (() => {
+  const locoX = CONFIG.TRAIN_FRONT_X - CONFIG.LOCO_W;
+  const vehicles = [{ x: locoX, w: CONFIG.LOCO_W, y: LAYER_Y.loco, wheels: [6, 14, 31, 39] }];
+  let x = locoX;
+  for (let i = 0; i < CONFIG.CAR_COUNT; i++) {
+    x -= CONFIG.CAR_GAP + CONFIG.CAR_W;
+    vehicles.push({ x, w: CONFIG.CAR_W, y: LAYER_Y.car, wheels: [5, 13, 25, 33] });
+  }
+  return {
+    vehicles,
+    centerX: (x + CONFIG.TRAIN_FRONT_X) / 2,
+    stackX: locoX + 15, stackY: LAYER_Y.loco - 1,   // exhaust stack on the roof
+  };
+})();
+
+// 7x7 wheel with four spokes; frames cover a quarter turn (spoke symmetry)
+function buildWheels(p) {
+  const frames = [];
+  for (let f = 0; f < CONFIG.WHEEL_FRAMES; f++) {
+    const [c, g] = makeCanvas(7, 7);
+    for (let y = 0; y < 7; y++)
+      for (let x = 0; x < 7; x++) {
+        const d = Math.hypot(x - 3, y - 3);
+        if (d <= 3.4) px(g, x, y, d > 2.4 ? p.ink : p.grayDark);
+      }
+    const base = (f / CONFIG.WHEEL_FRAMES) * Math.PI / 2;
+    for (let k = 0; k < 4; k++) {
+      const a = base + k * Math.PI / 2;
+      for (const r of [1, 2]) px(g, 3 + Math.round(Math.cos(a) * r), 3 + Math.round(Math.sin(a) * r), p.grayLight);
+    }
+    px(g, 3, 3, p.gray);
+    frames.push(c);
+  }
+  return frames;
+}
+
+// Locomotive body, 48x28. Row 23 is the underframe (screen y 139).
+function buildLoco(p, lit) {
+  const [c, g] = makeCanvas(48, 28);
+  // roof equipment: radiator fan housing, exhaust stack, twin-trumpet horn
+  rect(g, 4, 1, 8, 2, p.grayDark);
+  rect(g, 5, 1, 6, 1, p.gray);
+  for (let x = 5; x < 11; x += 2) px(g, x, 2, p.ink);
+  rect(g, 15, 0, 2, 3, p.grayDark);
+  rect(g, 15, 0, 2, 1, p.ink);
+  rect(g, 37, 2, 2, 1, p.grayDark);
+  rect(g, 35, 1, 5, 1, p.grayLight);
+  rect(g, 40, 0, 1, 3, p.grayLight);
+  // roof and gutter, rounded towards the nose
+  rect(g, 1, 3, 41, 1, p.grayLight);
+  rect(g, 0, 4, 43, 1, p.gray);
+  // boxy body
+  rect(g, 0, 5, 44, 1, p.blue);
+  rect(g, 0, 6, 45, 17, p.blue);
+  rect(g, 0, 5, 1, 18, p.navy);
+  rect(g, 0, 22, 45, 1, p.navy);
+  // livery: cream band and thin red line (lines up with the carriages)
+  rect(g, 1, 14, 44, 2, p.cream);
+  rect(g, 1, 16, 44, 1, p.red);
+  // hood louvres
+  for (const [x0, x1] of [[3, 13], [17, 29]]) {
+    rect(g, x0 - 1, 6, x1 - x0 + 3, 1, p.navy);
+    for (let x = x0; x <= x1; x += 2) rect(g, x, 7, 1, 5, p.navy);
+  }
+  rect(g, 32, 5, 1, 9, p.navy);                       // hood / cab seam
+  // cab door, door window and grab rail
+  rect(g, 33, 6, 3, 1, p.navy);
+  rect(g, 33, 6, 1, 16, p.navy);
+  rect(g, 35, 6, 1, 16, p.navy);
+  px(g, 34, 8, p.skyLight);
+  px(g, 34, 9, p.indigo);
+  rect(g, 36, 12, 1, 9, p.grayLight);
+  // small cab window (warm cab light after dark)
+  rect(g, 37, 6, 6, 6, p.navy);
+  if (lit) {
+    rect(g, 38, 7, 4, 4, PALETTE.amber);
+    rect(g, 38, 7, 4, 1, PALETTE.glow);
+  } else {
+    rect(g, 38, 7, 4, 4, p.indigo);
+    rect(g, 38, 7, 4, 1, p.skyLight);
+    px(g, 38, 8, p.skyLight);
+  }
+  rect(g, 44, 6, 1, 5, p.skyLight);                   // windscreen edge
+  // headlight housing on the nose
+  rect(g, 45, 5, 2, 3, p.grayDark);
+  px(g, 45, 6, PALETTE.glow);
+  px(g, 46, 6, PALETTE.white);
+  // warning stripes on the nose, number plate
+  for (let y = 17; y <= 21; y++) px(g, 44, y, y % 2 ? p.amber : p.ink);
+  rect(g, 20, 18, 7, 3, p.cream);
+  for (const x of [21, 22, 24, 25]) px(g, x, 19, p.ink);
+  // underframe, fuel tank, buffer beam and pilot
+  rect(g, 1, 23, 43, 1, p.grayDark);
+  rect(g, 18, 24, 11, 1, p.gray);
+  rect(g, 18, 25, 11, 1, p.grayDark);
+  rect(g, 19, 26, 9, 1, p.ink);
+  rect(g, 0, 23, 2, 1, p.red);
+  rect(g, 41, 23, 5, 1, p.red);
+  px(g, 46, 23, p.ink);
+  rect(g, 42, 24, 4, 1, p.grayDark);
+  rect(g, 43, 25, 4, 1, p.grayDark);
+  rect(g, 44, 26, 3, 1, p.ink);
+  return c;
+}
+
+function windowPane(g, p, lit, x, y, w, h) {
+  if (lit) {
+    rect(g, x, y, w, h, PALETTE.glow);
+    rect(g, x, y + h - 1, w, 1, PALETTE.amber);
+  } else {
+    rect(g, x, y, w, h, p.indigo);
+    px(g, x, y, p.skyLight);
+  }
+}
+
+// Passenger carriage, 39x19. Row 0 is the roof (screen y 121).
+function buildCar(p, lit, seed) {
+  const rng = mulberry32(100 + seed);
+  const w = CONFIG.CAR_W;
+  const [c, g] = makeCanvas(w, 19);
+  rect(g, 3, 0, w - 6, 1, p.grayLight);               // roof crown
+  rect(g, 1, 1, w - 2, 1, p.gray);                    // roof
+  rect(g, 0, 2, w, 1, p.grayDark);                    // rain gutter
+  rect(g, 0, 3, w, 13, p.green);                      // green body
+  rect(g, 0, 9, w, 2, p.cream);                       // cream stripe
+  rect(g, 0, 11, w, 1, p.red);                        // thin red line
+  rect(g, 0, 15, w, 1, p.greenDark);
+  rect(g, 0, 3, 1, 13, p.greenDark);
+  rect(g, w - 1, 3, 1, 13, p.greenDark);
+  // a door at each end
+  for (const dx of [1, w - 5]) {
+    rect(g, dx, 4, 4, 1, p.greenDark);
+    rect(g, dx, 4, 1, 12, p.greenDark);
+    rect(g, dx + 3, 4, 1, 12, p.greenDark);
+    windowPane(g, p, lit, dx + 1, 5, 2, 2);
+    px(g, dx === 1 ? dx + 2 : dx + 1, 12, p.grayLight);
+  }
+  // row of small windows, some with passengers
+  for (let i = 0; i < 5; i++) {
+    const wx = 8 + i * 5;
+    windowPane(g, p, lit, wx, 5, 3, 3);
+    if (rng() < 0.7) {
+      const hx = wx + randInt(rng, 0, 2), col = lit ? PALETTE.rust : p.ink;
+      px(g, hx, 6, col);
+      const x0 = Math.max(wx, hx - 1), x1 = Math.min(wx + 2, hx + 1);
+      rect(g, x0, 7, x1 - x0 + 1, 1, col);
+    }
+  }
+  // underframe and equipment box between the bogies
+  rect(g, 1, 16, w - 2, 1, p.grayDark);
+  rect(g, 2, 17, w - 4, 1, p.ink);
+  rect(g, 17, 17, 5, 2, p.grayDark);
+  return c;
+}
+
+// Dithered headlight beam, only used in lit (dusk / night) variants
+function buildBeam() {
+  const [c, g] = makeCanvas(56, 30);
+  for (let x = 0; x < 56; x++) {
+    const cy = 2 + x * 0.32, half = 1 + x * 0.22;
+    const dens = Math.max(1, 7 - Math.floor(x / 8));
+    for (let y = Math.floor(cy - half); y <= Math.ceil(cy + half); y++)
+      if (y >= 0 && y < 30 && bayer(x, y) < dens) px(g, x, y, x < 16 ? PALETTE.glow : PALETTE.peach);
+  }
+  return c;
+}
+
+function drawBogie(g, p, a, b) {
+  rect(g, a - 3, 143, b - a + 7, 1, p.gray);          // side frame
+  rect(g, a - 2, 144, b - a + 5, 1, p.grayDark);
+  const m = (a + b) >> 1;
+  rect(g, m - 1, 140, 3, 3, p.ink);                   // bolster spring
+  px(g, m, 141, p.grayDark);
+}
+
+// Body bounce relative to the bogies: -1, 0 or +1 px, only while moving
+function swayOffset(i) {
+  const k = Math.min(1, sim.speed / CONFIG.CRUISE_SPEED);
+  if (k < 0.05) return 0;
+  const s = (Math.sin(sim.swayPhase + i * 2.1) + 0.6 * Math.sin(sim.swayPhase * 2.3 + i * 1.3)) * k;
+  return s > 1.05 ? -1 : s < -1.3 ? 1 : 0;
+}
+
+function drawTrain(g, v) {
+  const p = v.p, vehicles = TRAIN.vehicles;
+  const wf = v.wheels[Math.floor(sim.wheelAngle / (Math.PI / 2) * CONFIG.WHEEL_FRAMES) % CONFIG.WHEEL_FRAMES];
+  // couplings (behind bodies): gangway bellows between carriages + coupler
+  for (let i = 0; i < vehicles.length - 1; i++) {
+    const gx = vehicles[i + 1].x + vehicles[i + 1].w;
+    if (i > 0) rect(g, gx, 125, CONFIG.CAR_GAP, 11, p.grayDark);
+    rect(g, gx - 1, 137, CONFIG.CAR_GAP + 2, 1, p.ink);
+  }
+  vehicles.forEach((veh, i) => {
+    for (const wx of veh.wheels) g.drawImage(wf, veh.x + wx - 3, LAYER_Y.wheel);
+    for (let k = 0; k < veh.wheels.length; k += 2) drawBogie(g, p, veh.x + veh.wheels[k], veh.x + veh.wheels[k + 1]);
+    g.drawImage(i === 0 ? v.loco : v.cars[i - 1], veh.x, veh.y + swayOffset(i));
+  });
+  if (v.beam) g.drawImage(v.beam, CONFIG.TRAIN_FRONT_X + 1, LAYER_Y.loco + 4);
+}
+
+// --- exhaust smoke -----------------------------------------------------
+// Puffs live in screen space. Air is still relative to the world, so a
+// puff's x velocity relaxes towards -speed: faster train, faster drift.
+function emitPuff(heavy) {
+  if (sim.smoke.length >= CONFIG.SMOKE_MAX) sim.smoke.shift();
+  sim.smoke.push({
+    x: TRAIN.stackX + Math.random(), y: TRAIN.stackY,
+    vx: 0, vy: -(heavy ? 26 : 16) - Math.random() * 8,
+    age: 0, life: (heavy ? 3.2 : 2.2) + Math.random(),
+    r0: heavy ? 1.5 : 0.8, grow: (heavy ? 2.4 : 1.6) + Math.random(),
+    shade: heavy ? 0 : 1,
+  });
+}
+
+function updateSmoke(dt) {
+  const st = sim.state;
+  const rate = st === 'DEPARTING' ? 12 : st === 'TRAVELING' ? 5 : st === 'ARRIVING' ? 3 : 1.5;
+  sim.smokeAcc += rate * dt;
+  while (sim.smokeAcc >= 1) { sim.smokeAcc -= 1; emitPuff(st === 'DEPARTING'); }
+  const windX = -(sim.speed + 4), kx = Math.min(1, dt * 2.2), ky = Math.min(1, dt * 1.5);
+  let n = 0;
+  for (const s of sim.smoke) {
+    s.age += dt;
+    s.vx += (windX - s.vx) * kx;
+    s.vy += (-5 - s.vy) * ky;
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    if (s.age < s.life && s.x > -16 && s.y > -16) sim.smoke[n++] = s;
+  }
+  sim.smoke.length = n;
+}
+
+const SMOKE_SHADES = ['grayDark', 'gray', 'grayLight', 'cloudShade'];
+
+// Dithered puff sprites, cached per lighting / radius / density / shade
+function puffSprite(v, r, dens, shade) {
+  const key = r + '|' + dens + '|' + shade;
+  let c = v.puffs[key];
+  if (!c) {
+    let g;
+    [c, g] = makeCanvas(r * 2 + 1, r * 2 + 1);
+    g.fillStyle = v.p[shade];
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++)
+        if (x * x + y * y <= (r + 0.5) * (r + 0.5) && bayer(x + r, y + r) < dens) g.fillRect(x + r, y + r, 1, 1);
+    v.puffs[key] = c;
+  }
+  return c;
+}
+
+function drawSmoke(g, v) {
+  for (const s of sim.smoke) {
+    const t = s.age / s.life;
+    const r = Math.min(7, Math.floor(s.r0 + s.age * s.grow));
+    const dens = 16 - Math.min(3, Math.floor(t * 4)) * 4;          // 16, 12, 8, 4 -> fades out
+    const shade = SMOKE_SHADES[Math.min(3, s.shade + Math.floor(t * 3))];
+    g.drawImage(puffSprite(v, r, dens, shade), Math.round(s.x) - r, Math.round(s.y) - r);
+  }
+}
+
+// =====================================================================
+// 5. WORLD LAYERS
+// =====================================================================
+// Every layer is a pre-rendered tile whose width is a multiple of 4, so
+// Bayer dither patterns line up across the seam and it repeats forever.
+
+// --- scenery props ---------------------------------------------------
+const PALM = [
+  '...aaa.aaa...',
+  '.aa...a...aa.',
+  'a...bbabb...a',
+  '...b.....b...',
+  '..b.......b..',
+  '.b.........b.',
+];
+const BANANA = [
+  'l.....l',
+  '.l...l.',
+  'd.l.l.d',
+  '.d.l.d.',
+  '...s...',
+  '...s...',
+];
+const HAYSTACK = [
+  '..s..',
+  '.hhh.',
+  'hhhhd',
+  'hhhdd',
+];
+
+function palm(g, x, base, h, lean, trunk, leaf, leafDark) {
+  for (let i = 0; i < h; i++) px(g, x + Math.round(lean * (i / h) ** 2), base - i, trunk);
+  stamp(g, PALM, x + lean - 6, base - h - 2, { a: leaf, b: leafDark });
+}
+
+function roundTree(g, x, base, r, trunkH, p, seed) {
+  const rng = mulberry32(seed), cy = base - trunkH - r;
+  rect(g, x, cy, 1, base - cy, p.brownDark);
+  disc(g, x, cy, r, p.greenDark);
+  disc(g, x - 1, cy - 1, Math.max(1, r - 2), p.green);
+  for (let i = 0; i < r * 2; i++) {
+    const a = rng() * Math.PI * 2, d = rng() * (r - 1) * 0.7;
+    px(g, Math.round(x - 2 + Math.cos(a) * d), Math.round(cy - 2 + Math.sin(a) * d), p.grass);
+  }
+}
+
+// Village house: mud walls, corrugated tin (or rusty) gable roof
+function house(g, x, base, w, p, tin, lightOn) {
+  const wallH = 6, top = base - wallH;
+  rect(g, x, top, w, wallH, p.tan);
+  rect(g, x, base - 1, w, 1, p.brown);
+  rect(g, x + 2, base - 4, 2, 3, p.brownDark);
+  rect(g, x + w - 5, base - 4, 2, 2, lightOn ? PALETTE.glow : p.brownDark);
+  const rh = 4, roof = tin ? p.grayLight : p.rust, ridge = tin ? p.gray : p.brown;
+  for (let r = 0; r < rh; r++) {
+    const inset = rh - 1 - r, x0 = x - 1 + inset, rw = w + 2 - inset * 2;
+    rect(g, x0, top - rh + r, rw, 1, r === 0 ? ridge : roof);
+    if (r > 0) for (let xx = x0 + 1; xx < x0 + rw; xx += 2) px(g, xx, top - rh + r, ridge);
+  }
+}
+
+function pond(g, x, y, w, p) {
+  rect(g, x + 2, y, w - 4, 1, p.green);
+  rect(g, x + 1, y + 1, w - 2, 1, p.skyMid);
+  rect(g, x, y + 2, w, 2, p.skyMid);
+  rect(g, x + 1, y + 4, w - 2, 1, p.skyMid);
+  rect(g, x + 3, y + 2, Math.floor(w / 3), 1, p.skyLight);
+  rect(g, x + Math.floor(w / 2), y + 3, 4, 1, p.skyLight);
+}
+
+// --- 1. sky gradient (static, banded with dithered edges) -------------
+const SKY_BANDS = {
+  day:   [['skyDeep', 0], ['skyMid', 44], ['skyLight', 88]],
+  dusk:  [['navy', 0], ['indigo', 16], ['slate', 32], ['purple', 50], ['rose', 68], ['orange', 84], ['peach', 98]],
+  night: [['ink', 0], ['navy', 34], ['indigo', 72], ['slate', 104]],
+};
+
+function buildSky(name) {
+  const [c, g] = makeCanvas(W, H);
+  const img = g.createImageData(W, H);
+  const bands = SKY_BANDS[name].map(([k, y]) => [hexToRgb(PALETTE[k]), y]);
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const jitter = (bayer(x, y) / 16 - 0.5) * 10;
+      let k = 0;
+      for (let j = 1; j < bands.length; j++) if (y >= bands[j][1] + jitter) k = j;
+      const i = (y * W + x) * 4, rgb = bands[k][0];
+      img.data[i] = rgb[0]; img.data[i + 1] = rgb[1]; img.data[i + 2] = rgb[2]; img.data[i + 3] = 255;
+    }
+  g.putImageData(img, 0, 0);
+
+  const halo = (cx, cy, r0, r1, col, level) => {
+    for (let y = -r1; y <= r1; y++)
+      for (let x = -r1; x <= r1; x++) {
+        const d = Math.hypot(x, y);
+        if (d > r0 && d <= r1 && bayer(cx + x, cy + y) < level) px(g, cx + x, cy + y, col);
+      }
+  };
+  if (name === 'day') {
+    halo(252, 24, 7, 11, PALETTE.skyLight, 5);
+    disc(g, 252, 24, 7, PALETTE.glow);
+    disc(g, 252, 24, 5, PALETTE.white);
+  } else if (name === 'dusk') {
+    halo(228, 104, 11, 17, PALETTE.peach, 6);
+    disc(g, 228, 104, 11, PALETTE.peach);
+    disc(g, 228, 104, 8, PALETTE.glow);
+  } else {
+    const rng = mulberry32(3);
+    for (let i = 0; i < 90; i++) {
+      const x = randInt(rng, 0, W - 1), y = randInt(rng, 0, 96), r = rng();
+      px(g, x, y, r < 0.6 ? PALETTE.grayLight : r < 0.9 ? PALETTE.cloudShade : PALETTE.white);
+    }
+    halo(150, 26, 6, 10, PALETTE.slate, 6);
+    disc(g, 150, 26, 6, PALETTE.cloudShade);
+    disc(g, 149, 25, 4, PALETTE.white);
+    px(g, 152, 27, PALETTE.grayLight); px(g, 148, 28, PALETTE.grayLight); px(g, 151, 23, PALETTE.cloudShade);
+  }
+  return c;
+}
+
+// --- 2. far clouds (0.05x) -------------------------------------------
+function buildClouds(p) {
+  const TW = 640, TH = 64, rng = mulberry32(7);
+  const [c, g] = makeCanvas(TW, TH);
+  for (let i = 0; i < 8; i++) {
+    const x0 = i * 80 + randInt(rng, 0, 40), base = randInt(rng, 14, 54), n = randInt(rng, 3, 6);
+    const puffs = [];
+    let x = x0;
+    for (let j = 0; j < n; j++) {
+      const mid = 1 - Math.abs(j - (n - 1) / 2) / n;
+      const r = Math.max(2, Math.round((3 + rng() * 4) * (0.6 + mid * 0.6)));
+      puffs.push([x, base - r + 2, r]);
+      x += r + randInt(rng, 1, 3);
+    }
+    wrapX(TW, o => {
+      for (const [cx, cy, r] of puffs) disc(g, cx + o, cy, r, p.cloudShade);
+      g.clearRect(x0 - 12 + o, base + 2, x - x0 + 24, 12);            // flat underside
+      for (const [cx, cy, r] of puffs) disc(g, cx - 1 + o, cy - 1, r - 1, p.white);
+    });
+  }
+  for (let i = 0; i < 6; i++) {                                         // thin high streaks
+    const x = randInt(rng, 0, TW - 1), y = randInt(rng, 2, 20), w = randInt(rng, 12, 30);
+    wrapX(TW, o => { rect(g, x + o, y, w, 1, p.white); rect(g, x + 4 + o, y + 1, w - 6, 1, p.cloudShade); });
+  }
+  return c;
+}
+
+// --- 3. distant tree line silhouette (0.2x) --------------------------
+function buildFar(p) {
+  const TW = 512, TH = 36, BASE = 28, rng = mulberry32(21);
+  const [c, g] = makeCanvas(TW, TH);
+  const col = p.haze;
+  rect(g, 0, BASE, TW, TH - BASE, col);
+  let x = 0;
+  while (x < TW) {
+    if (rng() < 0.12) { x += randInt(rng, 8, 26); continue; }        // open gap
+    const r = randInt(rng, 2, 6), cy = BASE - randInt(rng, 0, 5) - r + 1, cx = x;
+    wrapX(TW, o => { disc(g, cx + o, cy, r, col); rect(g, cx - r + 1 + o, cy, 2 * r - 1, BASE - cy, col); });
+    x += r + randInt(rng, 0, 3);
+  }
+  for (let i = 0; i < 60; i++) {                                        // low bushes
+    const bx = randInt(rng, 0, TW - 1), br = randInt(rng, 1, 2);
+    wrapX(TW, o => disc(g, bx + o, BASE - 1, br, col));
+  }
+  for (let i = 0; i < 10; i++) {                                        // coconut palms
+    const bx = randInt(rng, 0, TW - 1), h = randInt(rng, 12, 18), lean = randInt(rng, -2, 2);
+    wrapX(TW, o => palm(g, bx + o, BASE, h, lean, col, col, col));
+  }
+  return c;
+}
+
+// --- 4. mid-ground fields, villages, ponds (0.5x) --------------------
+function buildMid(p, lit) {
+  const TW = 640, TH = 56, GROUND = 26, rng = mulberry32(42);
+  const [c, g] = makeCanvas(TW, TH);
+
+  // paddy fields: horizontal bands split into plots, taller towards the viewer
+  const crops = ['grass', 'grassLight', 'paddy', 'grass', 'green', 'grassLight', 'tan'];
+  const rows = { grass: p.green, grassLight: p.grass, paddy: p.grassLight, green: p.greenDark, tan: p.brown };
+  for (const [by, bh] of [[24, 5], [29, 7], [36, 9], [45, 11]]) {
+    for (let x = 0; x < TW;) {
+      const w = Math.min(TW - x, randInt(rng, 28, 90)), crop = crops[randInt(rng, 0, crops.length - 1)];
+      rect(g, x, by, w, bh, p[crop]);
+      for (let yy = by + 1; yy < by + bh; yy += 2)
+        for (let xx = x; xx < x + w; xx++) if (bayer(xx, yy) < 6) px(g, xx, yy, rows[crop]);
+      rect(g, x, by, 1, bh, p.green);                                   // bund between plots
+      x += w;
+    }
+    rect(g, 0, by, TW, 1, p.green);
+  }
+  for (let i = 0; i < 3; i++) pond(g, randInt(rng, 0, TW - 40), randInt(rng, 30, 38), randInt(rng, 18, 34), p);
+
+  // props are recorded as closures (randomness resolved up front) and
+  // then drawn with wrapX so they cross the tile seam cleanly
+  const ops = [];
+  for (let vx = randInt(rng, 10, 40); vx < TW; ) {
+    const cw = randInt(rng, 40, 100);
+    for (let x = vx; x < vx + cw; x += randInt(rng, 6, 12)) {           // back row of trees
+      if (rng() < 0.25) {
+        const h = randInt(rng, 14, 20), lean = randInt(rng, -2, 2), tx = x;
+        ops.push(o => palm(g, tx + o, GROUND - 1, h, lean, p.brown, p.green, p.greenDark));
+      } else {
+        const r = randInt(rng, 4, 7), th = randInt(rng, 2, 6), seed = randInt(rng, 1, 1e6), tx = x;
+        ops.push(o => roundTree(g, tx + o, GROUND - 1, r, th, p, seed));
+      }
+    }
+    for (let i = randInt(rng, 0, 2); i >= 0; i--) {                     // banana plants
+      const bx = vx + randInt(rng, 0, cw);
+      ops.push(o => stamp(g, BANANA, bx - 3 + o, GROUND - 5, { l: p.grassLight, d: p.grass, s: p.green }));
+    }
+    for (let i = randInt(rng, 1, 3); i > 0; i--) {                      // houses in front
+      const hx = vx + randInt(rng, 0, cw - 16), hw = randInt(rng, 10, 16);
+      const tin = rng() < 0.6, lightRoll = rng();               // always roll: same layout in every lighting
+      const lightOn = lit && lightRoll < 0.7;
+      ops.push(o => house(g, hx + o, GROUND + 2, hw, p, tin, lightOn));
+    }
+    vx += cw + randInt(rng, 30, 110);
+  }
+  for (let i = 0; i < 16; i++) {                                        // lone trees, haystacks, egrets
+    const x = randInt(rng, 0, TW - 1), kind = rng();
+    if (kind < 0.3) {
+      const r = randInt(rng, 3, 5), th = randInt(rng, 2, 4), seed = randInt(rng, 1, 1e6);
+      ops.push(o => roundTree(g, x + o, GROUND + 1, r, th, p, seed));
+    } else if (kind < 0.55) {
+      const h = randInt(rng, 13, 19), lean = randInt(rng, -2, 2);
+      ops.push(o => palm(g, x + o, GROUND + 1, h, lean, p.brown, p.green, p.greenDark));
+    } else if (kind < 0.8) {
+      const y = randInt(rng, GROUND + 6, GROUND + 18);
+      ops.push(o => stamp(g, HAYSTACK, x - 2 + o, y - 4, { s: p.brown, h: p.paddy, d: p.tan }));
+    } else {
+      const y = randInt(rng, GROUND + 8, GROUND + 26);
+      ops.push(o => { px(g, x + o, y, p.white); px(g, x + 1 + o, y - 1, p.white); });
+    }
+  }
+  for (const op of ops) wrapX(TW, op);
+  return c;
+}
+
+// --- 5a. telegraph poles with sagging wires (1.0x) --------------------
+function buildPoles(p) {
+  const TW = 192, TH = 56, SPACING = 96, TOP = 6, FOOT = 51, SAG = 5;
+  const [c, g] = makeCanvas(TW, TH);
+  for (let x = 48; x < TW; x += SPACING) {
+    for (const ax of [-4, 5]) {                                         // catenary to the next pole
+      for (let i = 0; i <= SPACING; i++) {
+        const t = i / SPACING, y = TOP + Math.round(SAG * 4 * t * (1 - t));
+        wrapX(TW, o => px(g, x + ax + i + o, y, p.grayDark));
+      }
+    }
+    rect(g, x, TOP, 2, FOOT - TOP, p.brown);
+    rect(g, x + 1, TOP, 1, FOOT - TOP, p.brownDark);
+    rect(g, x - 4, TOP + 1, 10, 1, p.brownDark);                        // cross-arm
+    px(g, x - 4, TOP, p.cloudShade);
+    px(g, x + 5, TOP, p.cloudShade);                                    // insulators
+  }
+  return c;
+}
+
+// --- 5b. track: gravel bed, wooden sleepers, two rails (1.0x) ---------
+function buildTrack(p) {
+  const TW = 192, TH = 20, rng = mulberry32(5);
+  const [c, g] = makeCanvas(TW, TH);
+  rect(g, 0, 3, TW, 12, p.gray);                                        // ballast top
+  rect(g, 0, 15, TW, 3, p.grayDark);                                    // ballast shoulder
+  for (let i = 0; i < TW * 8; i++) {
+    const x = randInt(rng, 0, TW - 1), y = randInt(rng, 3, 17), r = rng();
+    px(g, x, y, y >= 15 ? (r < 0.5 ? p.gray : p.brownDark)
+                        : r < 0.4 ? p.grayLight : r < 0.8 ? p.grayDark : p.brown);
+  }
+  for (let x = 0; x < TW; x++) if (bayer(x, 3) < 8) px(g, x, 3, p.grayLight);
+  for (let x = 2; x < TW; x += 8) {                                     // sleepers
+    rect(g, x, 5, 4, 9, p.brown);
+    rect(g, x + 3, 5, 1, 9, p.brownDark);
+    rect(g, x, 13, 4, 1, p.brownDark);
+    px(g, x, 5, p.tan);
+  }
+  rect(g, 0, 6, TW, 1, p.grayLight); rect(g, 0, 7, TW, 1, p.grayDark);  // far rail
+  rect(g, 0, 11, TW, 1, p.grayLight); rect(g, 0, 12, TW, 1, p.grayDark); // near rail (y 151)
+  return c;
+}
+
+// --- 6. foreground grass tufts (1.3x) --------------------------------
+function buildFg(p) {
+  const TW = 416, TH = 34, GROUND = 12, rng = mulberry32(77);
+  const [c, g] = makeCanvas(TW, TH);
+  rect(g, 0, GROUND, TW, TH - GROUND, p.green);
+  for (let x = 0; x < TW; x++) if (bayer(x, GROUND) < 10) px(g, x, GROUND, p.grass);
+  for (let i = 0; i < 260; i++) {                                       // short grass strokes
+    const x = randInt(rng, 0, TW - 1), y = randInt(rng, GROUND + 2, TH - 1), w = randInt(rng, 1, 3);
+    const col = rng() < 0.7 ? p.greenDark : p.grass;
+    wrapX(TW, o => rect(g, x + o, y, w, 1, col));
+  }
+  ditherRect(g, 0, GROUND + 1, TW, 2, p.greenDark, 4);                  // shade below the embankment
+  const tufts = [];
+  for (let i = 0; i < 70; i++) {
+    const x = randInt(rng, 0, TW - 1), base = randInt(rng, GROUND + 2, TH - 1);
+    const tall = base < GROUND + 8 ? randInt(rng, 5, 10) : randInt(rng, 3, 7);
+    const blades = [];
+    for (let b = randInt(rng, 3, 6); b > 0; b--)
+      blades.push([randInt(rng, -2, 2), randInt(rng, Math.max(2, tall - 3), tall), randInt(rng, -2, 2), rng()]);
+    const flower = rng() < 0.15 ? (rng() < 0.5 ? 'red' : 'white') : null;
+    tufts.push({ x, base, blades, flower });
+  }
+  tufts.sort((a, b) => a.base - b.base);                                // nearer tufts on top
+  for (const t of tufts) {
+    wrapX(TW, o => {
+      for (const [dx, h, lean, cr] of t.blades) {
+        const col = cr < 0.3 ? p.greenDark : cr < 0.7 ? p.grass : p.grassLight;
+        for (let k = 0; k < h; k++) px(g, t.x + o + dx + Math.round(lean * k / h), t.base - k, col);
+      }
+      if (t.flower) {
+        const [dx, h, lean] = t.blades[0];
+        px(g, t.x + o + dx + lean, t.base - h, p[t.flower]);
+      }
+    });
+  }
+  return c;
+}
+
+// --- placeholder station platform (world object, 1.0x) ----------------
+// Platform k is placed so it is centred under the train when the train
+// has travelled exactly k * STATION_SPACING.
+const PLATFORM_OFFSET = Math.round(TRAIN.centerX - CONFIG.PLATFORM_W / 2);
+
+function buildPlatform(p, lit) {
+  const PW = CONFIG.PLATFORM_W;
+  const [c, g] = makeCanvas(PW, 44);
+  // shelter roof on posts
+  rect(g, 46, 2, 188, 1, p.rust);
+  rect(g, 47, 3, 186, 2, p.red);
+  for (let x = 49; x < 232; x += 3) px(g, x, 3, p.rust);
+  rect(g, 47, 5, 186, 1, p.brownDark);
+  for (let x = 54; x <= 226; x += 24) rect(g, x, 6, 1, 25, p.grayDark);
+  // lamp posts
+  for (const lx of [16, PW - 17]) {
+    rect(g, lx, 8, 1, 23, p.grayDark);
+    rect(g, lx - 1, 6, 3, 1, p.grayDark);
+    rect(g, lx - 1, 7, 3, 1, lit ? PALETTE.glow : p.cloudShade);
+    if (lit) {
+      for (let y = -4; y <= 6; y++)
+        for (let x = -5; x <= 5; x++) {
+          const d = Math.hypot(x, y - 1);
+          if (d > 1.5 && d < 5.5 && bayer(lx + x, 7 + y) < 3) px(g, lx + x, 7 + y, PALETTE.glow);
+        }
+    }
+  }
+  // slab top and brick face
+  rect(g, 0, 31, PW, 1, p.cream);
+  rect(g, 0, 32, PW, 2, p.tan);
+  rect(g, 0, 34, PW, 10, p.grayLight);
+  for (let row = 0; row < 3; row++) {
+    rect(g, 0, 36 + row * 3, PW, 1, p.gray);
+    for (let x = (row % 2) * 3; x < PW; x += 6) rect(g, x, 34 + row * 3, 1, 2, p.gray);
+  }
+  return c;
+}
+
+function drawStations(g, v) {
+  const S = CONFIG.STATION_SPACING, PW = CONFIG.PLATFORM_W, cam = Math.floor(sim.dist);
+  for (let k = Math.max(0, Math.floor((cam - W - PLATFORM_OFFSET) / S)); k * S + PLATFORM_OFFSET - cam < W; k++) {
+    const sx = k * S + PLATFORM_OFFSET - cam;
+    if (sx + PW < 0) continue;
+    g.drawImage(v.platform, sx, LAYER_Y.platform);
+    // name board hanging from the shelter roof
+    const name = CONFIG.STATION_NAMES[k % CONFIG.STATION_NAMES.length];
+    const tw = textWidth(name), bx = sx + (PW >> 1) - (tw >> 1) - 2;
+    px(g, bx + 2, 105, v.p.grayDark);
+    px(g, bx + tw + 1, 105, v.p.grayDark);
+    rect(g, bx, 106, tw + 4, 9, v.p.ink);
+    rect(g, bx + 1, 107, tw + 2, 7, v.p.cream);
+    drawText(g, name, bx + 2, 108, v.p.ink);
+  }
+}
+
+// --- lighting variants: every sprite and tile, once per lighting -----
+function buildVariant(name) {
+  const def = LIGHTING[name], p = {};
+  for (const k in PALETTE) p[k] = PALETTE[def.map[k] || k];
+  return {
+    name, lit: def.lit, p, puffs: {},
+    sky: buildSky(name),
+    clouds: buildClouds(p),
+    far: buildFar(p),
+    mid: buildMid(p, def.lit),
+    poles: buildPoles(p),
+    track: buildTrack(p),
+    fg: buildFg(p),
+    platform: buildPlatform(p, def.lit),
+    loco: buildLoco(p, def.lit),
+    cars: Array.from({ length: CONFIG.CAR_COUNT }, (_, i) => buildCar(p, def.lit, i)),
+    wheels: buildWheels(p),
+    beam: def.lit ? buildBeam() : null,
+  };
+}
+
+// =====================================================================
+// 6. JOURNEY STATE MACHINE
+// =====================================================================
+//   STOPPED --(STOP_TIME)--> DEPARTING --(ACCEL_TIME)--> TRAVELING
+//      ^                                                     |
+//      +------ ARRIVING <--(braking distance reached)--------+
+//
+// Departing and arriving follow a smoothstep velocity curve (zero
+// acceleration at both ends). Position is the exact integral of that
+// curve, so the train always comes to rest exactly at the platform.
+const sim = {
+  state: 'STOPPED', timer: 0,
+  speed: 0, dist: 0,                       // dist = world px travelled = camera x
+  segStart: 0, segSpeed: 0, segDur: 0,     // current accel / brake segment
+  nextStop: CONFIG.STATION_SPACING,
+  wheelAngle: 0, swayPhase: 0,
+  dayTime: CONFIG.START_DAY_TIME, cloudDrift: 0,
+  smoke: [], smokeAcc: 0,
+};
+
+const smoothstep = u => u * u * (3 - 2 * u);
+
+function setState(s) {
+  sim.state = s;
+  sim.timer = 0;
+  sim.segStart = sim.dist;
+  if (s === 'ARRIVING') {
+    // fit the braking curve to the remaining distance: d = v0 * T / 2
+    sim.segSpeed = sim.speed;
+    sim.segDur = 2 * (sim.nextStop - sim.dist) / sim.speed;
+  } else if (s === 'STOPPED') {
+    sim.speed = 0;
+    sim.nextStop = sim.dist + CONFIG.STATION_SPACING;
+  }
+}
+
+function updateJourney(dt) {
+  const V = CONFIG.CRUISE_SPEED;
+  switch (sim.state) {
+    case 'STOPPED':
+      sim.timer += dt;
+      if (sim.timer >= CONFIG.STOP_TIME) setState('DEPARTING');
+      break;
+
+    case 'DEPARTING': {
+      sim.timer += dt;
+      const T = CONFIG.ACCEL_TIME, u = Math.min(1, sim.timer / T);
+      sim.speed = V * smoothstep(u);
+      sim.dist = sim.segStart + V * T * (u ** 3 - u ** 4 / 2);         // integral of smoothstep
+      if (u >= 1) setState('TRAVELING');
+      break;
+    }
+
+    case 'TRAVELING':
+      sim.speed = V;
+      sim.dist += V * dt;
+      if (sim.nextStop - sim.dist <= V * CONFIG.BRAKE_TIME / 2) setState('ARRIVING');
+      break;
+
+    case 'ARRIVING': {
+      sim.timer += dt;
+      const T = sim.segDur, u = Math.min(1, sim.timer / T);
+      sim.speed = sim.segSpeed * (1 - smoothstep(u));
+      sim.dist = sim.segStart + sim.segSpeed * T * (u - u ** 3 + u ** 4 / 2);
+      if (u >= 1) {
+        sim.dist = sim.nextStop;
+        setState('STOPPED');
+      }
+      break;
+    }
+  }
+}
+
+// --- time of day ------------------------------------------------------
+function lightingAt(t) {
+  for (let i = 0; i < DAY_KEYS.length - 1; i++) {
+    const [t0, a] = DAY_KEYS[i], [t1, b] = DAY_KEYS[i + 1];
+    if (t >= t0 && t < t1) return { a, b, f: a === b ? 0 : (t - t0) / (t1 - t0) };
+  }
+  return { a: 'day', b: 'day', f: 0 };
+}
+
+function phaseLabel(t) {
+  return t < 70 ? 'DAY' : t < 102 ? 'DUSK' : t < 150 ? 'NIGHT' : t < 176 ? 'DAWN' : 'DAY';
+}
+
+function skipTimeOfDay() {
+  const next = HOLD_STARTS.find(s => s > sim.dayTime);
+  sim.dayTime = next === undefined ? 0 : next;
+}
+
+function update(dt) {
+  updateJourney(dt);
+  sim.dayTime = (sim.dayTime + dt) % CONFIG.DAY_LENGTH;
+  sim.cloudDrift += dt * 1.5;
+  sim.wheelAngle = (sim.wheelAngle + sim.speed * dt / CONFIG.WHEEL_R) % (Math.PI / 2);
+  sim.swayPhase += sim.speed * dt * 0.09;
+  updateSmoke(dt);
+}
+
+// =====================================================================
+// 7. MAIN LOOP
+// =====================================================================
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// second buffer for dithered cross-fades between lightings
+const [bufB, bctx] = makeCanvas(W, H);
+const DITHER_MASKS = [];
+for (let level = 0; level <= 16; level++) {
+  const [c, g] = makeCanvas(4, 4);
+  for (let y = 0; y < 4; y++)
+    for (let x = 0; x < 4; x++) if (bayer(x, y) < level) px(g, x, y, PALETTE.ink);   // alpha only
+  DITHER_MASKS.push(bctx.createPattern(c, 'repeat'));
+}
+
+const VARIANTS = { day: buildVariant('day'), dusk: buildVariant('dusk'), night: buildVariant('night') };
+
+function renderScene(g, v) {
+  const d = sim.dist;
+  g.drawImage(v.sky, 0, 0);                                               // 1. sky (static)
+  drawTiled(g, v.clouds, d * PARALLAX.clouds + sim.cloudDrift, LAYER_Y.clouds); // 2. clouds
+  drawTiled(g, v.far, d * PARALLAX.far, LAYER_Y.far);                     // 3. tree line
+  drawTiled(g, v.mid, d * PARALLAX.mid, LAYER_Y.mid);                     // 4. fields, houses
+  drawTiled(g, v.poles, d * PARALLAX.track, LAYER_Y.poles);               // 5. poles + wires
+  drawStations(g, v);
+  drawTiled(g, v.track, d * PARALLAX.track, LAYER_Y.track);               //    gravel, rails
+  drawTrain(g, v);
+  drawSmoke(g, v);
+  drawTiled(g, v.fg, d * PARALLAX.fg, LAYER_Y.fg);                        // 6. grass tufts
+}
+
+function render() {
+  const { a, b, f } = lightingAt(sim.dayTime);
+  const level = Math.round(f * 16);
+  renderScene(ctx, VARIANTS[level >= 16 ? b : a]);
+  if (level > 0 && level < 16) {
+    // keep lighting B only on pixels of the Bayer mask, then lay it over A
+    renderScene(bctx, VARIANTS[b]);
+    bctx.globalCompositeOperation = 'destination-in';
+    bctx.fillStyle = DITHER_MASKS[level];
+    bctx.fillRect(0, 0, W, H);
+    bctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(bufB, 0, 0);
+  }
+  if (input.debug) drawDebug(ctx);
+}
+
+function drawDebug(g) {
+  const S = CONFIG.STATION_SPACING, names = CONFIG.STATION_NAMES;
+  const stopped = sim.state === 'STOPPED';
+  const stn = names[Math.round((stopped ? sim.dist : sim.nextStop) / S) % names.length];
+  const lines = [
+    'STATE ' + sim.state,
+    'SPEED ' + sim.speed.toFixed(1) + ' PX/S',
+    'DIST  ' + Math.floor(sim.dist) + ' PX',
+    stopped ? 'AT    ' + stn : 'NEXT  ' + stn,
+    stopped ? 'DEPART IN ' + Math.ceil(CONFIG.STOP_TIME - sim.timer) + 'S'
+            : 'IN    ' + Math.ceil(sim.nextStop - sim.dist) + ' PX',
+    'TIME  ' + phaseLabel(sim.dayTime),
+  ];
+  if (input.fast) lines.push('FAST FORWARD X' + CONFIG.FAST_FACTOR);
+  lines.push('D DEBUG  F FAST  T TIME');
+  const w = Math.max(...lines.map(textWidth)) + 6, h = lines.length * 7 + 4;
+  rect(g, 2, 2, w, h, PALETTE.slate);
+  rect(g, 3, 3, w - 2, h - 2, PALETTE.ink);
+  lines.forEach((s, i) =>
+    drawText(g, s, 5, 5 + i * 7, i === lines.length - 1 ? PALETTE.grayLight : i === 0 ? PALETTE.glow : PALETTE.white));
+}
+
+// --- input ------------------------------------------------------------
+const input = { debug: true, fast: false };
+addEventListener('keydown', e => {
+  if (e.code === 'KeyD' && !e.repeat) input.debug = !input.debug;
+  if (e.code === 'KeyF') input.fast = true;
+  if (e.code === 'KeyT' && !e.repeat) skipTimeOfDay();
+});
+addEventListener('keyup', e => { if (e.code === 'KeyF') input.fast = false; });
+addEventListener('blur', () => { input.fast = false; });
+
+// --- scale to the window, keeping 16:9 --------------------------------
+function fit() {
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  canvas.style.width = Math.floor(W * s) + 'px';
+  canvas.style.height = Math.floor(H * s) + 'px';
+}
+addEventListener('resize', fit);
+fit();
+
+// --- fixed-timestep loop ----------------------------------------------
+let acc = 0, last = 0;
+function frame(now) {
+  const dt = Math.min(CONFIG.MAX_FRAME, (now - last) / 1000);
+  last = now;
+  acc += dt * (input.fast ? CONFIG.FAST_FACTOR : 1);
+  let steps = 0;
+  while (acc >= CONFIG.STEP && steps < 120) {
+    update(CONFIG.STEP);
+    acc -= CONFIG.STEP;
+    steps++;
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(now => { last = now; render(); requestAnimationFrame(frame); });
+</script>
+</body>
+</html>
