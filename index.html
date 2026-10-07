@@ -32,8 +32,14 @@ const CONFIG = {
   CRUISE_SPEED: 80,                     // world px per second
   ACCEL_TIME: 7,                        // s, 0 -> cruise
   BRAKE_TIME: 6,                        // s, cruise -> 0 (nominal)
-  STOP_TIME: 4,                         // s waiting at a platform
-  STATION_SPACING: 2000,                // world px between stations
+  PX_PER_KM: 15,                        // route km -> world px (compressed)
+
+  // station stop sequence (seconds)
+  SETTLE_TIME: 0.8,                     // brakes settle before doors open
+  DOOR_TIME: 0.7,                       // doors slide open / closed
+  BOARD_TIMEOUT: 18,                    // safety cap on the boarding phase
+  FLAG_TIME: 2.2,                       // guard waves the green flag
+  HORN_TIME: 1.6,                       // horn, then depart
 
   DAY_LENGTH: 180,                      // s for a full day/night cycle
   START_DAY_TIME: 20,
@@ -41,19 +47,49 @@ const CONFIG = {
   TRAIN_FRONT_X: 273,                   // screen x of the headlight
   LOCO_W: 46, CAR_W: 39, CAR_GAP: 2, CAR_COUNT: 5,
   WHEEL_R: 3.5, WHEEL_FRAMES: 6,
-  PLATFORM_W: 280,
   SMOKE_MAX: 70,
-
-  STATION_NAMES: ['KAMALAPUR', 'TONGI', 'NARSINGDI', 'BHAIRAB BAZAR', 'ASHUGANJ',
-                  'BRAHMANBARIA', 'AKHAURA', 'CUMILLA', 'LAKSAM', 'FENI', 'CHATTOGRAM'],
+  BN_SIZE: 11,                          // px size Bangla text is rasterised at
 };
+
+// The route, in travel order. To add a station, add an entry: only en,
+// bn and km are required, everything else falls back to STATION_DEFAULTS.
+//   en / bn   English and Bangla names shown on the board and banner
+//   km        distance from Kamalapur along the line (approximate)
+//   platform  [left, right] screen x of the platform while stopped here
+//   roof      'umbrella' | 'canopy' | 'shelter'
+//   crowd     passengers waiting to board, alight: passengers getting off
+//   idle      extra people standing around
+//   backdrop  scenery from BACKDROPS drawn behind the line near the station
+//   extras    station-specific props / characters ('porter', 'fish')
+const ROUTE = [
+  { en: 'KAMALAPUR', bn: 'কমলাপুর', km: 0,
+    platform: [-330, 650], roof: 'umbrella', crowd: 15, alight: 0, idle: 14,
+    backdrop: ['city'], extras: ['porter'] },
+  { en: 'BHAIRAB BAZAR', bn: 'ভৈরব বাজার', km: 82,
+    platform: [-90, 400], roof: 'canopy', roofColor: 'red', crowd: 6, alight: 4, idle: 4,
+    backdrop: ['river'], extras: ['fish'] },
+  { en: 'SRIMANGAL', bn: 'শ্রীমঙ্গল', km: 234,
+    platform: [4, 318], roof: 'shelter', crowd: 2, alight: 2, idle: 1,
+    backdrop: ['tea'] },
+  { en: 'SYLHET', bn: 'সিলেট', km: 319,
+    platform: [-60, 380], roof: 'canopy', crowd: 0, alight: 12, idle: 2,
+    backdrop: ['hills'] },
+];
+const STATION_DEFAULTS = { platform: [-40, 360], roof: 'canopy', roofColor: 'green',
+                           crowd: 4, alight: 3, idle: 3, backdrop: [], extras: [] };
 
 // Scroll speed of each parallax layer relative to the track
 const PARALLAX = { clouds: 0.05, far: 0.2, mid: 0.5, track: 1.0, fg: 1.3 };
 
 // Screen y where each layer / sprite is drawn
-const LAYER_Y = { clouds: 6, far: 84, mid: 92, poles: 92, platform: 100,
+const LAYER_Y = { clouds: 6, far: 84, mid: 92, poles: 92,
                   track: 140, fg: 146, loco: 116, car: 121, wheel: 144 };
+
+// Near-side platform geometry (screen y). People stand with their feet
+// between WALK_MIN and WALK_MAX; doors span DOOR_TOP..DOOR_FLOOR.
+const PLAT = { TOP: 148, EDGE_Y: 152, WALK_MIN: 154, WALK_MAX: 169,
+               DOOR_TOP: 125, DOOR_FLOOR: 136,
+               STALL_X: 280, STALL_Y: 163, BOARD_X: 132 };
 
 // Time-of-day keyframes: [seconds, lighting]. Between two different
 // lightings the scene cross-fades with an ordered dither.
@@ -77,11 +113,12 @@ const PALETTE = {
 
 // Lighting never tints: each lighting remaps palette keys onto other
 // palette keys, and every sprite is pre-rendered once per lighting.
-// Light sources (lit windows, lamps, headlight) use PALETTE directly.
+// Light sources (lit windows, lamps, headlight) use PALETTE directly;
+// p.glow / p.amber are yellow *paint* (safety line, signs) and do darken.
 const LIGHTING = {
   day:   { lit: false, map: {} },
   dusk:  { lit: true, map: {
-    slate: 'indigo', orange: 'rose', peach: 'orange',
+    slate: 'indigo', orange: 'rose', peach: 'orange', glow: 'peach', amber: 'orange',
     skyDeep: 'slate', skyMid: 'purple', skyLight: 'rose', white: 'peach', cloudShade: 'rose',
     grayLight: 'gray', gray: 'grayDark', grayDark: 'navy',
     brownDark: 'ink', brown: 'brownDark', tan: 'rust', cream: 'peach', red: 'rust', rust: 'brown',
@@ -90,7 +127,7 @@ const LIGHTING = {
   } },
   night: { lit: true, map: {
     navy: 'ink', indigo: 'navy', slate: 'indigo', purple: 'indigo', rose: 'purple',
-    orange: 'purple', peach: 'rose',
+    orange: 'purple', peach: 'rose', glow: 'tan', amber: 'rust',
     skyDeep: 'navy', skyMid: 'indigo', skyLight: 'slate', white: 'slate', cloudShade: 'indigo',
     grayLight: 'slate', gray: 'indigo', grayDark: 'navy',
     brownDark: 'ink', brown: 'navy', tan: 'purple', cream: 'slate', red: 'purple', rust: 'indigo',
@@ -215,6 +252,44 @@ function drawText(g, str, x, y, col) {
     if (str[i] !== ' ') g.drawImage(glyph(str[i], col), x + i * 4, y);
 }
 const textWidth = s => s.length * 4 - 1;
+
+// Same font at 2x: glyphs are scaled by drawImage with smoothing off
+function drawText2x(g, str, x, y, col) {
+  str = String(str).toUpperCase();
+  for (let i = 0; i < str.length; i++)
+    if (str[i] !== ' ') g.drawImage(glyph(str[i], col), x + i * 8, y, 6, 10);
+}
+
+// Bangla: rasterise with a Bengali-capable system font, then threshold
+// the alpha to a hard 1-bit mask. The mask is painted in palette colours,
+// so the text stays crisp and never introduces off-palette pixels.
+const BN_FONT = '"Nirmala UI", Vrinda, "Shonar Bangla", "Kohinoor Bangla", ' +
+                '"Bangla Sangam MN", "Noto Sans Bengali", sans-serif';
+
+function textMask(str, size) {
+  const [c, g] = makeCanvas(Math.ceil(size * str.length * 1.4) + 8, size * 3);
+  g.font = size + 'px ' + BN_FONT;
+  g.fillStyle = '#fff';                     // scratch canvas only, never shown
+  g.fillText(str, 4, size * 2);
+  const cw = c.width, data = g.getImageData(0, 0, cw, c.height).data;
+  let x0 = cw, y0 = c.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < c.height; y++)
+    for (let x = 0; x < cw; x++)
+      if (data[(y * cw + x) * 4 + 3] >= 110) {
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+  if (x1 < 0) return { w: 0, h: 0, bits: new Uint8Array(0) };   // no Bengali font available
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, bits = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) bits[y * w + x] = data[((y + y0) * cw + x + x0) * 4 + 3] >= 110 ? 1 : 0;
+  return { w, h, bits };
+}
+
+function drawMask(g, m, x, y, col) {
+  g.fillStyle = col;
+  for (let yy = 0; yy < m.h; yy++)
+    for (let xx = 0; xx < m.w; xx++) if (m.bits[yy * m.w + xx]) g.fillRect(x + xx, y + yy, 1, 1);
+}
 
 // =====================================================================
 // 4. TRAIN
@@ -418,7 +493,34 @@ function drawTrain(g, v) {
     for (let k = 0; k < veh.wheels.length; k += 2) drawBogie(g, p, veh.x + veh.wheels[k], veh.x + veh.wheels[k + 1]);
     g.drawImage(i === 0 ? v.loco : v.cars[i - 1], veh.x, veh.y + swayOffset(i));
   });
+  drawDoors(g, v);
   if (v.beam) g.drawImage(v.beam, CONFIG.TRAIN_FRONT_X + 1, LAYER_Y.loco + 4);
+  if (sim.state === 'STOPPED' && sim.stopPhase === 'HORN') drawHornWaves(g, p);
+}
+
+// Left pixel column of every carriage door (two per carriage)
+const DOORS = TRAIN.vehicles.slice(1).flatMap(c => [c.x + 1, c.x + CONFIG.CAR_W - 5]);
+
+// Doors slide open into the body: the 4 px doorway is revealed column by column
+function drawDoors(g, v) {
+  const k = Math.round(sim.doorOpen * 4), p = v.p;
+  if (!k) return;
+  for (const dx of DOORS) {
+    rect(g, dx, PLAT.DOOR_TOP, k, PLAT.DOOR_FLOOR - PLAT.DOOR_TOP + 1, p.ink);
+    if (v.lit) rect(g, dx, PLAT.DOOR_TOP, k, 1, PALETTE.amber);         // ceiling light
+    if (k < 4) rect(g, dx + k, PLAT.DOOR_TOP, 1, PLAT.DOOR_FLOOR - PLAT.DOOR_TOP + 1, p.greenDark);
+    if (k >= 3) rect(g, dx, 138, 4, 1, p.grayLight);                    // folding step
+  }
+}
+
+function drawHornWaves(g, p) {
+  const hx = TRAIN.vehicles[0].x + 42, hy = LAYER_Y.loco + 1;
+  const ph = Math.floor(sim.phaseT * 8) % 3;
+  for (let i = 0; i < 3; i++) {
+    if ((i + ph) % 3 === 2) continue;                                   // flicker outward
+    const r = 2 + i * 3;
+    for (let a = -2; a <= 2; a++) px(g, hx + r + (Math.abs(a) === 2 ? -1 : 0), hy + a - i, p.white);
+  }
 }
 
 // --- exhaust smoke -----------------------------------------------------
@@ -437,9 +539,12 @@ function emitPuff(heavy) {
 
 function updateSmoke(dt) {
   const st = sim.state;
-  const rate = st === 'DEPARTING' ? 12 : st === 'TRAVELING' ? 5 : st === 'ARRIVING' ? 3 : 1.5;
+  // idling engine puffs gently; it revs up (darker smoke) for the horn and departure
+  const revving = st === 'DEPARTING' || sim.stopPhase === 'HORN';
+  const rate = revving ? 12 : st === 'TRAVELING' ? 5 : st === 'ARRIVING' ? 3
+             : sim.stopPhase === 'TERMINUS' ? 0.8 : 1.5;
   sim.smokeAcc += rate * dt;
-  while (sim.smokeAcc >= 1) { sim.smokeAcc -= 1; emitPuff(st === 'DEPARTING'); }
+  while (sim.smokeAcc >= 1) { sim.smokeAcc -= 1; emitPuff(revving); }
   const windX = -(sim.speed + 4), kx = Math.min(1, dt * 2.2), ky = Math.min(1, dt * 1.5);
   let n = 0;
   for (const s of sim.smoke) {
@@ -800,67 +905,14 @@ function buildFg(p) {
   return c;
 }
 
-// --- placeholder station platform (world object, 1.0x) ----------------
-// Platform k is placed so it is centred under the train when the train
-// has travelled exactly k * STATION_SPACING.
-const PLATFORM_OFFSET = Math.round(TRAIN.centerX - CONFIG.PLATFORM_W / 2);
-
-function buildPlatform(p, lit) {
-  const PW = CONFIG.PLATFORM_W;
-  const [c, g] = makeCanvas(PW, 44);
-  // shelter roof on posts
-  rect(g, 46, 2, 188, 1, p.rust);
-  rect(g, 47, 3, 186, 2, p.red);
-  for (let x = 49; x < 232; x += 3) px(g, x, 3, p.rust);
-  rect(g, 47, 5, 186, 1, p.brownDark);
-  for (let x = 54; x <= 226; x += 24) rect(g, x, 6, 1, 25, p.grayDark);
-  // lamp posts
-  for (const lx of [16, PW - 17]) {
-    rect(g, lx, 8, 1, 23, p.grayDark);
-    rect(g, lx - 1, 6, 3, 1, p.grayDark);
-    rect(g, lx - 1, 7, 3, 1, lit ? PALETTE.glow : p.cloudShade);
-    if (lit) {
-      for (let y = -4; y <= 6; y++)
-        for (let x = -5; x <= 5; x++) {
-          const d = Math.hypot(x, y - 1);
-          if (d > 1.5 && d < 5.5 && bayer(lx + x, 7 + y) < 3) px(g, lx + x, 7 + y, PALETTE.glow);
-        }
-    }
-  }
-  // slab top and brick face
-  rect(g, 0, 31, PW, 1, p.cream);
-  rect(g, 0, 32, PW, 2, p.tan);
-  rect(g, 0, 34, PW, 10, p.grayLight);
-  for (let row = 0; row < 3; row++) {
-    rect(g, 0, 36 + row * 3, PW, 1, p.gray);
-    for (let x = (row % 2) * 3; x < PW; x += 6) rect(g, x, 34 + row * 3, 1, 2, p.gray);
-  }
-  return c;
-}
-
-function drawStations(g, v) {
-  const S = CONFIG.STATION_SPACING, PW = CONFIG.PLATFORM_W, cam = Math.floor(sim.dist);
-  for (let k = Math.max(0, Math.floor((cam - W - PLATFORM_OFFSET) / S)); k * S + PLATFORM_OFFSET - cam < W; k++) {
-    const sx = k * S + PLATFORM_OFFSET - cam;
-    if (sx + PW < 0) continue;
-    g.drawImage(v.platform, sx, LAYER_Y.platform);
-    // name board hanging from the shelter roof
-    const name = CONFIG.STATION_NAMES[k % CONFIG.STATION_NAMES.length];
-    const tw = textWidth(name), bx = sx + (PW >> 1) - (tw >> 1) - 2;
-    px(g, bx + 2, 105, v.p.grayDark);
-    px(g, bx + tw + 1, 105, v.p.grayDark);
-    rect(g, bx, 106, tw + 4, 9, v.p.ink);
-    rect(g, bx + 1, 107, tw + 2, 7, v.p.cream);
-    drawText(g, name, bx + 2, 108, v.p.ink);
-  }
-}
-
 // --- lighting variants: every sprite and tile, once per lighting -----
 function buildVariant(name) {
   const def = LIGHTING[name], p = {};
   for (const k in PALETTE) p[k] = PALETTE[def.map[k] || k];
+  const backdrops = {};
+  for (const key in BACKDROPS) backdrops[key] = BACKDROPS[key].build(p, def.lit);
   return {
-    name, lit: def.lit, p, puffs: {},
+    name, lit: def.lit, p, puffs: {}, people: new Map(),
     sky: buildSky(name),
     clouds: buildClouds(p),
     far: buildFar(p),
@@ -868,32 +920,790 @@ function buildVariant(name) {
     poles: buildPoles(p),
     track: buildTrack(p),
     fg: buildFg(p),
-    platform: buildPlatform(p, def.lit),
     loco: buildLoco(p, def.lit),
     cars: Array.from({ length: CONFIG.CAR_COUNT }, (_, i) => buildCar(p, def.lit, i)),
     wheels: buildWheels(p),
     beam: def.lit ? buildBeam() : null,
+    backdrops,
+    props: buildProps(p, def.lit),
+    stations: STATIONS.map(st => buildStationSprites(st, p)),
   };
 }
 
 // =====================================================================
-// 6. JOURNEY STATE MACHINE
+// 6. STATIONS
 // =====================================================================
-//   STOPPED --(STOP_TIME)--> DEPARTING --(ACCEL_TIME)--> TRAVELING
-//      ^                                                     |
-//      +------ ARRIVING <--(braking distance reached)--------+
+// Platforms are on the near side of the line, so passengers, benches and
+// pillars stand in front of the train. Station content is laid out in
+// "stop coordinates" - its screen x while the train stands there - so
+//   screen x = stopX + station.dist - camera.
+
+// Roof styles: y0/h of the roof sprite, pillarTop where pillars start
+const ROOFS = {
+  umbrella: { y0: 78, h: 14, pillarTop: 84 },            // Kamalapur's concrete umbrellas
+  canopy:   { y0: 86, h: 7, pillarTop: 93, span: [30, 258] },
+  shelter:  { y0: 93, h: 7, pillarTop: 100, span: [186, 266] },
+};
+const BOARD_TOP = 93;
+
+const STATIONS = ROUTE.map((r, index) => {
+  const st = { ...STATION_DEFAULTS, ...r, index };
+  st.dist = Math.round(st.km * CONFIG.PX_PER_KM);
+  st.bnMask = textMask(st.bn, CONFIG.BN_SIZE);
+  st.layout = layoutStation(st);
+  return st;
+});
+const LAST_STATION = STATIONS.length - 1;
+
+// Fixed furniture positions for one station (same in every lighting)
+function layoutStation(st) {
+  const rng = mulberry32(900 + st.index * 77);
+  const [L, R] = st.platform, items = [];
+  const clear = x => x > L + 6 && x < R - 12 && (x < PLAT.STALL_X - 10 || x > PLAT.STALL_X + 36) &&
+                     Math.abs(x - PLAT.BOARD_X) > 34;              // keep the name board unobstructed
+  const span = ROOFS[st.roof].span || [L, R];
+  // roof pillars sit mid-carriage (41 px apart), clear of every door
+  for (let x = Math.ceil((span[0] + 6) / 41) * 41; x <= span[1] - 6; x += 41) items.push({ type: 'pillar', x, y: 158 });
+  const every = (start, step, fn) => { for (let x = start + step * Math.ceil((L - start) / step); x < R; x += step) fn(x); };
+  every(30, 82, x => clear(x) && items.push({ type: 'lamp', x, y: 161 }));
+  every(56, 82, x => clear(x) && clear(x + 10) && items.push({ type: 'bench', x, y: 166 }));
+  every(76, 164, x => clear(x) && items.push({ type: 'bin', x, y: 164 }));
+  items.push({ type: 'tap', x: 256, y: 165 });
+  items.push({ type: 'stall', x: PLAT.STALL_X, y: PLAT.STALL_Y });
+  items.push({ type: 'board', x: PLAT.BOARD_X, y: 159 });
+  if (st.extras.includes('fish'))
+    for (const [x, y] of [[228, 160], [236, 165], [246, 161], [-40, 161], [-30, 166], [346, 162], [356, 167]])
+      if (clear(x)) items.push({ type: 'basket', x, y, v: randInt(rng, 0, 2) });
+  return items;
+}
+
+// --- shared furniture sprites; each has an anchor (ax, ay) at its foot --
+function prop(w, h, ax, ay, paint) {
+  const [c, g] = makeCanvas(w, h);
+  paint(g);
+  return { c, ax, ay };
+}
+
+function glowHalo(g, cx, cy, r0, r1, level) {
+  const n = Math.ceil(r1);
+  for (let y = -n; y <= n; y++)
+    for (let x = -n; x <= n; x++) {
+      const d = Math.hypot(x, y);
+      if (d > r0 && d <= r1 && bayer(cx + x, cy + y) < level) px(g, cx + x, cy + y, PALETTE.glow);
+    }
+}
+
+function buildProps(p, lit) {
+  return {
+    // lamp post: lantern head, warm dithered halo after dark
+    lamp: prop(15, 64, 7, 63, g => {
+      if (lit) glowHalo(g, 7, 8, 2, 7, 4);
+      rect(g, 7, 9, 1, 52, p.grayDark);
+      rect(g, 6, 61, 3, 3, p.gray);
+      rect(g, 5, 6, 5, 1, p.grayDark);
+      rect(g, 6, 7, 3, 2, lit ? PALETTE.glow : p.cloudShade);
+      rect(g, 6, 9, 3, 1, p.grayDark);
+    }),
+    bench: prop(10, 5, 0, 4, g => {
+      rect(g, 0, 0, 10, 1, p.brown);                     // backrest
+      rect(g, 0, 1, 10, 1, p.brownDark);
+      rect(g, 0, 2, 10, 1, p.tan);                       // seat
+      rect(g, 1, 3, 1, 2, p.grayDark);
+      rect(g, 8, 3, 1, 2, p.grayDark);
+    }),
+    bin: prop(4, 6, 1, 5, g => {
+      rect(g, 0, 0, 4, 1, p.grayLight);
+      rect(g, 0, 1, 4, 5, p.blue);
+      rect(g, 3, 1, 1, 5, p.navy);
+      px(g, 1, 2, p.white);
+    }),
+    // water tap: standpipe, spout, basin and a drip
+    tap: prop(7, 9, 3, 8, g => {
+      rect(g, 3, 1, 1, 6, p.grayDark);
+      rect(g, 3, 0, 3, 1, p.gray);
+      px(g, 5, 1, p.gray);
+      px(g, 2, 0, p.red);
+      px(g, 5, 3, p.skyLight);
+      rect(g, 0, 7, 7, 1, p.grayLight);
+      rect(g, 1, 8, 5, 1, p.gray);
+    }),
+    stall: prop(27, 26, 0, 25, g => paintStall(g, p, lit)),
+    basket0: fishBasket(p, 0), basket1: fishBasket(p, 1), basket2: fishBasket(p, 2),
+  };
+}
+
+// Woven basket heaped with silver fish (Bhairab is a big fish market)
+function fishBasket(p, v) {
+  return prop(9, 6, 4, 5, g => {
+    rect(g, 1, 2, 7, 1, p.brownDark);
+    for (let y = 3; y < 6; y++) for (let x = 1 + (y === 5); x < 8 - (y === 5); x++) px(g, x, y, (x + y) & 1 ? p.tan : p.brown);
+    const fish = [p.grayLight, p.white, p.skyLight, v === 2 ? p.rose : p.cloudShade];
+    for (let x = 2; x < 7; x++) px(g, x, 1, fish[(x + v) % 4]);
+    for (let x = 3 - (v === 1); x < 6 + (v === 1); x++) px(g, x, 0, fish[(x + v + 1) % 4]);
+    px(g, 4, 1, p.ink);
+  });
+}
+
+// Tea stall: striped awning, kettle on a clay stove, glass jars, bulb
+function paintStall(g, p, lit) {
+  rect(g, 2, 4, 23, 12, p.brownDark);                    // dim interior
+  rect(g, 3, 8, 21, 1, p.brown);                         // back shelf
+  for (const [x, k] of [[4, 'red'], [6, 'paddy'], [8, 'white'], [22, 'skyMid']]) px(g, x, 7, p[k]);
+  stamp(g, ['yy', 'yyy', '.y'], 20, 5, { y: p.paddy });  // hanging banana bunch
+  // the tea seller behind the counter
+  rect(g, 14, 10, 3, 1, p.ink);
+  px(g, 14, 11, p.ink); rect(g, 15, 11, 2, 2, p.brown);
+  rect(g, 13, 13, 5, 3, p.white);
+  // bare bulb on a cord
+  rect(g, 11, 3, 1, 2, p.ink);
+  if (lit) glowHalo(g, 11, 5, 1.2, 4.6, 5);
+  px(g, 11, 5, lit ? PALETTE.glow : p.cloudShade);
+  // striped awning and posts
+  rect(g, 0, 0, 27, 1, p.rust);
+  for (let x = 0; x < 27; x++) rect(g, x, 1, 1, 2, (x >> 1) & 1 ? p.cream : p.red);
+  for (let x = 0; x < 27; x += 2) px(g, x, 3, p.red);
+  rect(g, 1, 3, 1, 23, p.brown);
+  rect(g, 25, 3, 1, 23, p.brown);
+  // clay stove with a glowing fire, aluminium kettle with spout
+  rect(g, 3, 14, 6, 2, p.rust);
+  px(g, 5, 15, PALETTE.amber);
+  rect(g, 4, 11, 4, 3, p.grayLight);
+  rect(g, 5, 10, 2, 1, p.gray);
+  rect(g, 5, 9, 2, 1, p.ink);
+  px(g, 8, 12, p.grayLight);
+  px(g, 9, 11, p.grayLight);
+  // glass jars of biscuits and sweets
+  for (const [x, k, lid] of [[10, 'tan', 'red'], [18, 'red', 'blue'], [21, 'paddy', 'green']]) {
+    rect(g, x, 12, 3, 1, p[lid]);
+    rect(g, x, 13, 3, 3, p.skyLight);
+    rect(g, x + 1, 14, 1, 2, p[k]);
+  }
+  // counter
+  rect(g, 0, 16, 27, 1, p.tan);
+  rect(g, 1, 17, 25, 9, p.brown);
+  rect(g, 2, 19, 23, 2, p.green);
+  for (let x = 4; x < 24; x += 3) px(g, x, 20, p.cream);
+  rect(g, 2, 23, 23, 1, p.brownDark);
+}
+
+// --- per-station sprites: platform slab, roof, name board -------------
+function buildStationSprites(st, p) {
+  const [L, R] = st.platform, roof = ROOFS[st.roof];
+  const span = roof.span || [L, R];
+  return {
+    slab: buildSlab(p, R - L, st.index),
+    roof: st.roof === 'umbrella' ? buildUmbrellaRoof(p, span[0], span[1])
+                                 : buildTinRoof(p, span[1] - span[0], st.roofColor),
+    roofX: span[0], roofY: roof.y0,
+    board: buildBoard(p, st),
+  };
+}
+
+// Raised concrete platform seen from slightly above: coping, yellow safety
+// line along the track edge, paved surface, then the front face.
+function buildSlab(p, w, seed) {
+  const rng = mulberry32(300 + seed);
+  const [c, g] = makeCanvas(w, 32);                      // screen y 148..179
+  rect(g, 0, 0, w, 1, p.cloudShade);
+  rect(g, 0, 1, w, 23, p.grayLight);
+  rect(g, 0, 2, w, 1, p.glow);                           // safety line
+  for (const y of [9, 16]) rect(g, 0, y, w, 1, p.gray);
+  [[3, 6], [10, 6], [17, 7]].forEach(([y, h], r) => {
+    for (let x = (r * 7) % 16; x < w; x += 16) rect(g, x, y, 1, h, p.gray);
+  });
+  for (let i = 0; i < w / 3; i++) px(g, randInt(rng, 0, w - 1), randInt(rng, 3, 23), rng() < 0.6 ? p.gray : p.cloudShade);
+  rect(g, 0, 24, w, 1, p.cloudShade);
+  rect(g, 0, 25, w, 7, p.gray);
+  rect(g, 0, 29, w, 3, p.grayDark);
+  for (let x = 5; x < w; x += 24) rect(g, x, 25, 1, 7, p.grayDark);
+  rect(g, 0, 0, 1, 32, p.grayDark);
+  rect(g, w - 1, 0, 1, 32, p.grayDark);
+  return c;
+}
+
+// Kamalapur: a row of concrete umbrella shells, one per column, giving the
+// roof its wavy outline
+function buildUmbrellaRoof(p, L, R) {
+  const w = R - L, [c, g] = makeCanvas(w, ROOFS.umbrella.h);
+  for (let x = 0; x < w; x++) {
+    const sx = x + L, cx = Math.round(sx / 41) * 41, t = (sx - cx) / 20.5;
+    const top = 2 + Math.round(5 * t * t);
+    px(g, x, top, p.white);
+    rect(g, x, top + 1, 1, 2, sx < cx ? p.cloudShade : p.grayLight);
+    px(g, x, top + 3, p.gray);
+    const cap = 3 - Math.abs(sx - cx);                   // flared column capital
+    if (cap > 0) rect(g, x, top + 4, 1, cap, p.grayLight);
+  }
+  return c;
+}
+
+function buildTinRoof(p, w, color) {
+  const [c, g] = makeCanvas(w, 7);
+  const base = p[color], dark = p[color === 'red' ? 'rust' : 'greenDark'];
+  rect(g, 1, 0, w - 2, 1, dark);
+  rect(g, 0, 1, w, 4, base);
+  for (let x = 1; x < w; x += 3) rect(g, x, 1, 1, 4, dark);   // corrugations
+  rect(g, 0, 5, w, 1, p.grayLight);
+  rect(g, 0, 6, w, 1, p.grayDark);
+  return c;
+}
+
+// Yellow name board on two posts: Bangla above English
+function buildBoard(p, st) {
+  const m = st.bnMask, ew = textWidth(st.en);
+  const bw = Math.max(m.w, ew) + 8, bh = m.h + 13, h = 160 - BOARD_TOP;
+  const [c, g] = makeCanvas(bw, h);
+  for (const x of [3, bw - 5]) { rect(g, x, bh, 2, h - bh, p.grayDark); rect(g, x, bh, 1, h - bh, p.gray); }
+  rect(g, 0, 0, bw, bh, p.ink);
+  rect(g, 1, 1, bw - 2, bh - 2, p.glow);
+  drawMask(g, m, (bw - m.w) >> 1, 3, p.ink);
+  drawText(g, st.en, (bw - ew) >> 1, m.h + 6, p.ink);
+  return c;
+}
+
+// --- station backdrops: drawn in a parallax layer behind the line ------
+// sx is the sprite's screen x while the train stands at the station.
+const BACKDROPS = {
+  city:  { layer: 'far', sx: -300, y: 62,  build: buildCity },    // Dhaka skyline
+  hills: { layer: 'far', sx: -220, y: 58,  build: buildHills },   // Sylhet hills
+  river: { layer: 'mid', sx: -140, y: 92,  build: buildRiver },   // Meghna at Bhairab
+  tea:   { layer: 'mid', sx: -170, y: 70,  build: buildTea },     // Srimangal tea estate
+};
+
+const ramp = (x, w, edge) => Math.max(0, Math.min(1, Math.min(x, w - 1 - x) / edge));
+
+function buildCity(p, lit) {
+  const TW = 540, TH = 52, rng = mulberry32(61);
+  const [c, g] = makeCanvas(TW, TH);
+  // two rows of blocks; the city thins out towards the right (the way out of Dhaka)
+  for (const [col, side, win, hMax] of [[p.cloudShade, p.grayLight, p.grayLight, 46], [p.grayLight, p.gray, p.gray, 34]]) {
+    for (let x = randInt(rng, 0, 6); x < TW - 12; ) {
+      const w = randInt(rng, 8, 22), fade = Math.max(0, Math.min(1, (TW - 30 - x) / 220));
+      const h = Math.max(4, Math.round(randInt(rng, 10, hMax) * (0.2 + 0.8 * fade))), top = TH - h;
+      rect(g, x, top, w, h, col);
+      rect(g, x + w - 1, top, 1, h, side);
+      for (let yy = top + 2; yy < TH - 2; yy += 3)
+        for (let xx = x + 2; xx < x + w - 2; xx += 3) {
+          const on = rng() < 0.35, warm = rng() < 0.7;       // always roll: same city in every lighting
+          px(g, xx, yy, lit && on ? (warm ? PALETTE.glow : PALETTE.amber) : win);
+        }
+      if (rng() < 0.2 && h > 24) { rect(g, x + (w >> 1), top - 5, 1, 5, p.grayDark); px(g, x + (w >> 1), top - 6, p.red); }
+      x += w + randInt(rng, 0, 3) + (fade < 0.6 ? randInt(rng, 6, 18) : 0);
+    }
+  }
+  // a mosque dome and minaret among the blocks
+  const mx = 168, base = TH - 18;
+  disc(g, mx, base, 7, p.white);
+  rect(g, mx - 9, base, 19, 18, p.cloudShade);
+  rect(g, mx, base - 10, 1, 3, p.glow);
+  rect(g, mx + 13, TH - 40, 3, 40, p.white);
+  rect(g, mx + 12, TH - 30, 5, 1, p.grayLight);
+  rect(g, mx + 14, TH - 43, 1, 3, p.grayLight);
+  return c;
+}
+
+function buildHills(p) {
+  const TW = 660, TH = 56, rng = mulberry32(71);
+  const [c, g] = makeCanvas(TW, TH);
+  const front = [];
+  for (let x = 0; x < TW; x++) {
+    const e = Math.pow(Math.sin(Math.PI * x / TW), 0.6);
+    const back = Math.round((32 + 9 * Math.sin(x / 70 + 1) + 5 * Math.sin(x / 29)) * e);
+    front[x] = Math.round((21 + 7 * Math.sin(x / 46 + 2) + 3 * Math.sin(x / 17 + 0.5)) * e);
+    if (back > 0) rect(g, x, TH - back, 1, back, p.haze);
+    if (front[x] > 0) {
+      rect(g, x, TH - front[x], 1, front[x], p.green);
+      rect(g, x, TH - front[x], 1, 2, p.grass);        // sunlit ridge
+      for (let y = TH - front[x] + 4; y < TH; y += 3) if (bayer(x, y) < 5) px(g, x, y, p.greenDark);  // tea terraces
+    }
+  }
+  for (let i = 0; i < 40; i++) {                        // trees dotted along the ridges
+    const x = randInt(rng, 10, TW - 11);
+    if (front[x] > 6) disc(g, x, TH - front[x], randInt(rng, 1, 2), p.greenDark);
+  }
+  return c;
+}
+
+const BOAT_SAIL = ['....s......', '....ss.....', '....srs....', '....ssss...', '....sssss..',
+                   '....m......', 'h..........h', 'hhhhhhhhhhhh', '.dddddddddd.'];
+const BOAT_HOOD = ['...tttt..b.', '..tttttt.b.', 'h.tttttt.b.h', 'hhhhhhhhhhhh', '.dddddddddd.'];
+
+function buildRiver(p) {
+  const TW = 560, TH = 36, rng = mulberry32(83);
+  const [c, g] = makeCanvas(TW, TH);
+  const top = [], bot = [];
+  for (let x = 0; x < TW; x++) {
+    const e = smoothstep(ramp(x, TW, 70));               // water shows above the carriage roofs
+    top[x] = 12 + Math.round((1 - e) * 9);
+    bot[x] = 30 - Math.round((1 - e) * 9);
+  }
+  for (let x = 0; x < TW; x++) {
+    if (top[x] >= bot[x]) continue;
+    rect(g, x, top[x] - 3, 1, 3, p.grass);              // far bank
+    px(g, x, top[x] - 1, p.tan);
+    rect(g, x, top[x], 1, bot[x] - top[x], p.skyMid);   // water
+    px(g, x, top[x], p.skyDeep);
+    px(g, x, bot[x], p.tan);                            // near bank: sand, then grass
+    rect(g, x, bot[x] + 1, 1, 3, p.grass);
+  }
+  for (let x = randInt(rng, 70, 80); x < TW - 70; x += randInt(rng, 5, 14)) {   // far-bank trees
+    const by = top[x] - 3, r = randInt(rng, 2, 4);
+    if (rng() < 0.3) palm(g, x, by, randInt(rng, 8, 12), randInt(rng, -1, 1), p.brown, p.green, p.greenDark);
+    else { disc(g, x, by - r, r, p.greenDark); disc(g, x - 1, by - r - 1, Math.max(0, r - 2), p.green); }
+  }
+  for (let i = 0; i < 46; i++) {                        // shimmer
+    const x = randInt(rng, 80, TW - 90), y = randInt(rng, 14, 28);
+    rect(g, x, y, randInt(rng, 2, 5), 1, p.skyLight);
+  }
+  const colors = { s: p.cream, r: p.red, m: p.brownDark, t: p.tan, b: p.ink, h: p.brown, d: p.brownDark };
+  stamp(g, BOAT_SAIL, 150, 12, colors);                 // country boats (nouka)
+  stamp(g, BOAT_HOOD, 300, 17, colors);
+  stamp(g, BOAT_SAIL, 410, 10, colors);
+  return c;
+}
+
+// A tea estate on a gentle hillside, rising above the carriage roofs
+function buildTea(p) {
+  const TW = 620, TH = 52, rng = mulberry32(97);
+  const [c, g] = makeCanvas(TW, TH);
+  const top = x => 20 + Math.round(4 * Math.sin(x / 85 + 1)) + Math.round((1 - ramp(x, TW, 90)) * 34);
+  for (let x = 0; x < TW; x++) { const t = top(x); if (t < TH) rect(g, x, t, 1, TH - t, p.greenDark); }
+  // tall shade trees: pale slender trunks, flat spreading canopies
+  for (let x = randInt(rng, 70, 90); x < TW - 70; x += randInt(rng, 22, 36)) {
+    const t = top(x), ct = t - randInt(rng, 13, 19), cw = randInt(rng, 7, 11);
+    rect(g, x, ct + 3, 1, t + 3 - ct, p.grayLight);
+    px(g, x - 1, ct + 6, p.grayLight);
+    px(g, x + 1, ct + 5, p.grayLight);
+    rect(g, x - cw + 3, ct, 2 * cw - 5, 1, p.green);
+    rect(g, x - cw + 1, ct + 1, 2 * cw - 1, 2, p.greenDark);
+    rect(g, x - cw + 2, ct + 3, 2 * cw - 3, 1, p.greenDark);
+    ditherRect(g, x - cw + 2, ct + 1, 2 * cw - 3, 1, p.green, 6);
+  }
+  // rows of clipped tea bushes following the slope, wider apart towards the viewer
+  for (let ry = 22, i = 0; ry < TH; ry += 4 + i, i++) {
+    const r = i < 2 ? 2 : 3;
+    for (let x = 0; x < TW; x += r * 2 - 1) {
+      const y = ry + Math.round(Math.sin(x / 50 + i) * 1.5);
+      if (y - r <= top(x)) continue;
+      disc(g, x, y, r, p.grass);
+      disc(g, x - 1, y - 1, r - 1, p.grassLight);
+    }
+  }
+  return c;
+}
+
+function drawBackdrops(g, v, layer) {
+  const f = PARALLAX[layer];
+  for (const st of STATIONS)
+    for (const key of st.backdrop) {
+      const b = BACKDROPS[key];
+      if (b.layer !== layer) continue;
+      const spr = v.backdrops[key];
+      const x = b.sx + Math.floor(st.dist * f) - Math.floor(sim.dist * f);   // same stepping as the tiles
+      if (x < W && x + spr.width > 0) g.drawImage(spr, x, b.y);
+    }
+}
+
+// --- near-side platform: slab, then furniture and people sorted by depth
+function drawStationFront(g, v) {
+  const cam = Math.floor(sim.dist);
+  for (const st of STATIONS) {
+    const off = st.dist - cam, [L, R] = st.platform;
+    if (L + off >= W + 40 || R + off <= -40) continue;
+    const s = v.stations[st.index];
+    g.drawImage(s.slab, L + off, PLAT.TOP);
+    const items = st.layout.concat(sim.people.filter(q => q.st === st.index && !q.hidden));
+    items.sort((a, b) => a.y - b.y);
+    for (const it of items) it.d ? drawPersonAt(g, v, it, off) : drawProp(g, v, st, it, off);
+    g.drawImage(s.roof, s.roofX + off, s.roofY);
+  }
+}
+
+function drawProp(g, v, st, it, off) {
+  const p = v.p, x = it.x + off;
+  if (it.type === 'pillar') {
+    const top = ROOFS[st.roof].pillarTop, h = it.y - top + 1;
+    if (st.roof === 'umbrella') {                        // round concrete column
+      rect(g, x - 1, top, 3, h, p.cloudShade);
+      rect(g, x + 1, top, 1, h, p.grayLight);
+      rect(g, x - 2, it.y - 1, 5, 2, p.grayLight);
+    } else {                                             // painted iron post with brackets
+      rect(g, x, top, 2, h, p.grayDark);
+      rect(g, x, top, 1, h, p.gray);
+      px(g, x - 1, top, p.grayDark);
+      px(g, x + 2, top, p.grayDark);
+    }
+  } else if (it.type === 'board') {
+    const b = v.stations[st.index].board;
+    g.drawImage(b, x - (b.width >> 1), BOARD_TOP);
+  } else {
+    const spr = v.props[it.type === 'basket' ? 'basket' + it.v : it.type];
+    g.drawImage(spr.c, x - spr.ax, it.y - spr.ay);
+    if (it.type === 'stall') drawSteam(g, v, x + 9, it.y - 15);
+  }
+}
+
+// Steam curling up from the kettle spout: a few dithered wisps on a loop
+function drawSteam(g, v, x, y) {
+  for (let i = 0; i < 4; i++) {
+    const ph = (sim.clock * 0.6 + i / 4) % 1;
+    const sx = x + Math.round(Math.sin(ph * 6 + i * 2) * 1.2 + ph * 2), sy = y - Math.floor(ph * 11);
+    if (bayer(sx, sy) < (1 - ph) * 22) px(g, sx, sy, v.p.white);
+    if (ph < 0.45) px(g, sx + 1, sy - 1, v.p.cloudShade);
+  }
+}
+
+// =====================================================================
+// 7. PEOPLE
+// =====================================================================
+// Each person is a procedural "design" (clothes, skin, what they carry),
+// painted into small sprites on demand and cached per lighting.
+// Frames: 0-3 walk cycle, 4 sitting, 5/6 sipping tea, 7/8 waving a flag.
+const SKINS = ['tan', 'brown', 'rust', 'brown'];
+const SHIRTS = ['white', 'cream', 'skyLight', 'skyMid', 'grayLight', 'paddy', 'rose', 'orange', 'blue', 'tan'];
+const TROUSERS = ['navy', 'grayDark', 'brown', 'gray', 'indigo'];
+const LUNGIS = [['blue', 'navy'], ['green', 'greenDark'], ['purple', 'indigo'], ['skyMid', 'blue'],
+                ['red', 'rust'], ['grayLight', 'white']];                         // checked cotton
+const SARIS = [['red', 'glow'], ['rose', 'white'], ['orange', 'red'], ['purple', 'glow'], ['blue', 'skyLight'],
+               ['green', 'glow'], ['glow', 'red'], ['skyMid', 'white'], ['amber', 'green']];  // [body, border]
+const KAMEEZ = [['rose', 'white', 'skyMid'], ['skyMid', 'navy', 'white'], ['paddy', 'green', 'red'],
+                ['purple', 'white', 'rose'], ['orange', 'cream', 'red'], ['green', 'white', 'glow']]; // [kameez, salwar, dupatta]
+const BAGS = ['brown', 'ink', 'red', 'navy', 'grassLight'];
+const PASSENGER_KINDS = ['lungi', 'lungi', 'trousers', 'trousers', 'trousers', 'sari', 'sari', 'kameez',
+                         'kameez', 'child', 'child', 'elder'];
+const PERSON_W = 13, PERSON_H = 20, PERSON_CX = 6, PERSON_FY = 19;   // sprite box, centre column, feet row
+const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
+
+let designId = 0;
+function makeDesign(rng, kind) {
+  kind = kind || pick(rng, PASSENGER_KINDS);
+  const d = { id: ++designId, kind, skin: pick(rng, SKINS), hair: rng() < 0.85 ? 'ink' : 'brownDark', h: 12, carry: null };
+  switch (kind) {
+    case 'lungi':    d.top = pick(rng, SHIRTS); [d.cloth, d.cloth2] = pick(rng, LUNGIS); break;
+    case 'trousers': d.top = pick(rng, SHIRTS); d.bottom = pick(rng, TROUSERS); break;
+    case 'sari':     [d.cloth, d.accent] = pick(rng, SARIS); d.covered = rng() < 0.6; break;
+    case 'kameez':   [d.top, d.bottom, d.accent] = pick(rng, KAMEEZ); break;
+    case 'child':    d.h = 8; d.girl = rng() < 0.5; d.bottom = pick(rng, TROUSERS);
+                     d.top = d.girl ? pick(rng, ['rose', 'red', 'glow', 'skyMid', 'purple']) : pick(rng, SHIRTS); break;
+    case 'elder':    d.hair = 'white'; d.top = rng() < 0.6 ? 'white' : 'cream'; d.bottom = 'white'; break;
+    case 'porter':   d.top = 'red'; d.cloth = 'grayLight'; d.cloth2 = 'white'; d.carry = 'case'; break;
+    case 'vendor':   d.top = 'white'; [d.cloth, d.cloth2] = pick(rng, LUNGIS); d.carry = 'tray'; break;
+    case 'guard':    d.top = 'white'; d.bottom = 'navy'; break;
+  }
+  if (['lungi', 'trousers', 'sari', 'kameez'].includes(kind)) {
+    const r = rng();
+    if (r < 0.3) d.carry = 'bag';
+    else if (r < 0.42 && kind !== 'kameez') d.carry = kind === 'trousers' ? 'backpack' : 'bundle';
+    d.bagColor = pick(rng, BAGS);
+  }
+  return d;
+}
+
+function paintPerson(g, d, p, frame) {
+  const ox = PERSON_CX - 2, oy = PERSON_FY - d.h + 1;
+  const P = (x, y, k) => { g.fillStyle = p[k]; g.fillRect(ox + x, oy + y, 1, 1); };
+  const R = (x, y, w, h, k) => { g.fillStyle = p[k]; g.fillRect(ox + x, oy + y, w, h); };
+  const s = d.skin, walk = frame < 4 ? frame : 0, stride = walk === 1 || walk === 3;
+
+  if (d.kind === 'child') {                               // 8 px tall
+    R(1, 0, 3, 1, d.hair); P(1, 1, d.hair); R(2, 1, 2, 1, s); R(1, 2, 3, 1, s);
+    if (d.girl) {                                         // frock and a pigtail
+      P(0, 1, d.hair); R(1, 3, 3, 4, d.top);
+      if (stride) { P(0, 6, d.top); P(4, 6, d.top); }
+    } else {
+      R(1, 3, 3, 3, d.top);
+      if (stride) { P(1, 6, d.bottom); P(3, 6, d.bottom); } else R(2, 6, 2, 1, d.bottom);
+    }
+    if (stride) { P(0, 7, s); P(4, 7, s); } else { P(2, 7, s); P(3, 7, s); }
+    if (walk === 1) P(4, 4, s); else if (walk === 3) P(0, 4, s);
+    return;
+  }
+
+  const sit = frame === 4, dy = sit ? 3 : 0, lean = d.kind === 'elder' && !sit ? 1 : 0;
+  const cover = d.kind === 'sari' && d.covered ? d.cloth : d.kind === 'guard' ? 'navy' : d.hair;
+  const longHair = d.kind === 'sari' || d.kind === 'kameez';
+  // 3x3 head facing right; elders stoop forward a pixel
+  R(1 + lean, dy, 3, 1, cover);
+  P(1 + lean, dy + 1, cover); R(2 + lean, dy + 1, 2, 1, s);
+  P(1 + lean, dy + 2, longHair ? cover : s); R(2 + lean, dy + 2, 2, 1, s);
+  if (d.kind === 'guard') P(4, 0, 'navy');                // cap peak
+  if (d.kind === 'elder') P(3 + lean, dy + 2, 'white');   // white beard
+
+  const checked = d.kind === 'lungi' || d.kind === 'porter' || d.kind === 'vendor';
+  const lower = (x, y) => checked ? ((x + y) & 1 ? d.cloth : d.cloth2) : (d.kind === 'sari' ? d.cloth : d.bottom);
+
+  if (sit) {
+    R(1, 6, 3, 3, d.kind === 'sari' ? d.cloth : d.top);
+    if (d.kind === 'sari') P(1, 6, d.accent);
+    if (d.kind === 'kameez') R(1, 6, 3, 1, d.accent);
+    for (let x = 1; x <= 4; x++) P(x, 9, lower(x, 9));    // thighs along the seat
+    P(4, 10, lower(4, 10));
+    P(4, 11, s); P(5, 11, s);
+    P(3, 8, s);                                          // hands in the lap
+    return;
+  }
+
+  switch (d.kind) {
+    case 'sari':                                         // drape to the ankles, pallu over the shoulder
+      R(1, 3, 3, 8, d.cloth);
+      R(1, 3, 1, 3, d.accent);
+      R(1, 10, 3, 1, d.accent);
+      if (stride) { P(0, 10, d.accent); P(4, 10, d.accent); }
+      break;
+    case 'kameez':                                       // long tunic, dupatta, salwar
+      R(1, 3, 3, 6, d.top);
+      R(1, 3, 3, 1, d.accent); R(1, 4, 1, 2, d.accent);
+      if (stride) { P(1, 9, d.bottom); P(3, 9, d.bottom); P(0, 10, d.bottom); P(4, 10, d.bottom); }
+      else R(2, 9, 2, 2, d.bottom);
+      break;
+    case 'elder':                                        // long panjabi
+      R(1, 3, 3, 7, d.top);
+      if (stride) { P(1, 10, d.bottom); P(3, 10, d.bottom); } else R(2, 10, 2, 1, d.bottom);
+      break;
+    case 'trousers': case 'guard':
+      R(1, 3, 3, 4, d.top);
+      R(1, 7, 3, 1, d.bottom);
+      if (stride) { R(1, 8, 3, 1, d.bottom); P(1, 9, d.bottom); P(3, 9, d.bottom); P(0, 10, d.bottom); P(4, 10, d.bottom); }
+      else R(2, 8, 2, 3, d.bottom);
+      break;
+    default:                                             // lungi (porter and vendor too)
+      R(1, 3, 3, 4, d.top);
+      for (let y = 7; y <= 10; y++) for (let x = 1; x <= 3; x++) P(x, y, lower(x, y));
+      if (stride) { P(0, 10, lower(0, 10)); P(4, 10, lower(4, 10)); }
+  }
+  const shoe = d.kind === 'trousers' || d.kind === 'guard' ? 'ink' : s;
+  if (stride) { P(0, 11, shoe); P(4, 11, shoe); } else { P(2, 11, shoe); P(3, 11, shoe); }
+  if (shoe === 'ink') P(stride ? 5 : 4, 11, shoe);       // shoes point forward
+
+  // arms and whatever they carry
+  const hand = frame === 6 ? [4, 3] : frame === 5 ? [4, 5] : walk === 1 ? [4, 6] : walk === 3 ? [0, 6] : [3, 7];
+  switch (d.carry) {
+    case 'bag':      R(4, 7, 2, 2, d.bagColor); P(4, 6, s); break;
+    case 'backpack': R(0, 3, 1, 4, d.bagColor); P(hand[0], hand[1], s); break;
+    case 'bundle':   R(0, -2, 5, 2, d.bagColor); P(2, -3, d.bagColor); P(4, 0, s); P(4, 1, s); break;
+    case 'case':     R(-1, -3, 6, 3, 'rust'); R(-1, -1, 6, 1, 'brownDark'); P(2, -4, 'ink');   // suitcase on the head
+                     P(4, 3, d.top); P(4, 2, s); P(4, 1, s); break;
+    case 'tray':     R(3, 5, 5, 1, 'tan'); P(4, 4, 'red'); P(5, 4, 'paddy'); P(6, 4, 'white'); P(3, 6, s); break;
+    default:
+      if (d.kind === 'elder') { R(5, 6, 1, 6, 'brown'); P(4, 6, s); }   // walking cane
+      else if (d.kind !== 'guard') P(hand[0], hand[1], s);
+  }
+  if (frame === 5 || frame === 6) P(hand[0], hand[1] - 1, 'white');      // glass of tea
+  if (d.kind === 'guard') {
+    if (frame === 7) {                                   // flag out to the right
+      P(4, 3, d.top); P(4, 2, s); R(5, -1, 1, 3, 'brownDark');
+      R(6, -3, 3, 3, 'grassLight'); R(6, -1, 3, 1, 'greenDark');
+    } else if (frame === 8) {                            // flag swung overhead
+      P(4, 3, d.top); P(4, 2, s); R(4, -2, 1, 4, 'brownDark');
+      R(0, -4, 4, 3, 'grassLight'); R(0, -2, 4, 1, 'greenDark');
+    } else {                                             // rolled flag at his side
+      P(4, 6, s); R(4, 7, 1, 3, 'grassLight');
+    }
+  }
+}
+
+function personSprite(v, d, frame, dir) {
+  let set = v.people.get(d.id);
+  if (!set) v.people.set(d.id, set = []);
+  const key = frame * 2 + (dir < 0 ? 1 : 0);
+  if (!set[key]) {
+    const [c, g] = makeCanvas(PERSON_W, PERSON_H);
+    if (dir < 0) { g.translate(PERSON_W, 0); g.scale(-1, 1); }   // exact pixel mirror
+    paintPerson(g, d, v.p, frame);
+    set[key] = c;
+  }
+  return set[key];
+}
+
+function personFrame(q) {
+  if (q.walking) return Math.floor(q.anim) % 4;
+  if (q.mode === 'sit') return 4;
+  if (q.mode === 'sip') return q.t % 3.4 > 2.3 ? 6 : 5;
+  if (q.mode === 'guard' && sim.state === 'STOPPED' && sim.station === q.st &&
+      (sim.stopPhase === 'FLAG' || sim.stopPhase === 'HORN')) return 7 + (Math.floor(sim.clock * 4) & 1);
+  return 0;
+}
+
+function drawPersonAt(g, v, q, off) {
+  const spr = personSprite(v, q.d, personFrame(q), q.dir);
+  const x = Math.round(q.x) + off - PERSON_CX, y = Math.round(q.y) - PERSON_FY;
+  if (q.clip === null) { g.drawImage(spr, x, y); return; }
+  // stepping through a doorway: only the part inside the door column shows
+  g.save();
+  g.beginPath();
+  g.rect(q.clip + off, PLAT.DOOR_TOP, 4, PLAT.EDGE_Y - PLAT.DOOR_TOP + 1);
+  g.clip();
+  g.drawImage(spr, x, y);
+  g.restore();
+}
+
+// --- behaviour ---------------------------------------------------------
+// People follow a list of waypoints; a waypoint may clip them to a door
+// column (climbing in or out) and may run a callback when reached.
+const gone = q => { q.gone = true; };
+const nearestDoor = x => DOORS.reduce((a, b) => Math.abs(b + 2 - x) < Math.abs(a + 2 - x) ? b : a);
+const randWalkY = rng => PLAT.WALK_MIN + Math.floor(rng() * (PLAT.WALK_MAX - PLAT.WALK_MIN + 1));
+
+function spawnPerson(st, d, x, y, dir, mode) {
+  const speed = d.kind === 'elder' ? 7 : d.kind === 'child' ? 13 : 11 + Math.random() * 5;
+  const q = { st: st.index, d, x, y, dir, mode, speed, path: [], anim: 0, t: Math.random() * 3,
+              delay: 0, clip: null, hidden: false, walking: false, turnAt: 2 + Math.random() * 6 };
+  sim.people.push(q);
+  return q;
+}
+
+function populateStation(st) {
+  sim.populated.add(st.index);
+  const rng = mulberry32((Math.random() * 1e9) | 0);    // a different crowd every trip
+  const [L, R] = st.platform;
+  const seated = kind => { const d = makeDesign(rng, kind); d.carry = null; return d; };
+  for (let i = 0; i < st.crowd; i++)                    // waiting to board, spread along the train
+    spawnPerson(st, makeDesign(rng), 24 + rng() * 244, randWalkY(rng), rng() < 0.5 ? 1 : -1, 'wait');
+  for (let i = 0; i < st.idle; i++) {                   // just standing about
+    let x;
+    do x = L + 10 + rng() * (R - L - 20); while (x > PLAT.STALL_X - 4 && x < PLAT.STALL_X + 34);
+    spawnPerson(st, makeDesign(rng), x, randWalkY(rng), rng() < 0.5 ? 1 : -1, 'idle');
+  }
+  for (const it of st.layout)                           // someone resting on a bench
+    if (it.type === 'bench' && rng() < 0.5)
+      spawnPerson(st, seated(pick(rng, ['lungi', 'trousers', 'sari', 'kameez', 'elder'])), it.x + 3, it.y, rng() < 0.5 ? 1 : -1, 'sit');
+  spawnPerson(st, seated(pick(rng, ['lungi', 'trousers'])), PLAT.STALL_X + 31, PLAT.STALL_Y + 2, -1, 'sip');
+  const vendor = spawnPerson(st, makeDesign(rng, 'vendor'), 60 + rng() * 150, PLAT.WALK_MAX, 1, 'patrol');
+  vendor.ax = Math.max(L + 20, -120);
+  vendor.bx = Math.min(R - 46, 440);
+  vendor.speed = 9;
+  spawnPerson(st, makeDesign(rng, 'guard'), 14, 167, 1, 'guard');   // front of the platform, flag against concrete
+  if (st.extras.includes('porter')) {
+    const q = spawnPerson(st, makeDesign(rng, 'porter'), 300, 169, -1, 'porterWait');   // in front of the stall
+    q.d2 = { ...q.d, id: ++designId, carry: null };     // same porter, luggage delivered
+  }
+}
+
+// Doors are open: a few passengers step off, then the waiting ones board
+function startBoarding(st) {
+  const terminus = st.index === LAST_STATION;
+  for (let i = 0; i < st.alight; i++) {
+    const door = DOORS[Math.floor(Math.random() * DOORS.length)], x = door + 2;
+    const q = spawnPerson(st, makeDesign(Math.random), x, PLAT.DOOR_FLOOR, x < 150 ? -1 : 1, 'alight');
+    const y = randWalkY(Math.random), exit = x < 150 ? -24 : W + 24;
+    q.hidden = true;
+    q.delay = i * (terminus ? 0.5 : 0.45) + Math.random() * 0.6;
+    q.path = [{ x, y: PLAT.EDGE_Y, clip: door, speed: 18 },
+              { x: x + Math.sign(exit - x) * 4, y },
+              { x: exit, y, then: gone }];
+  }
+  for (const q of sim.people) {
+    if (q.st !== st.index) continue;
+    if (q.mode === 'wait') {
+      const door = nearestDoor(q.x), x = door + 2;
+      q.mode = 'board';
+      q.delay = (st.alight ? 1.4 : 0.3) + Math.random() * 3;
+      q.path = [{ x, y: q.y }, { x, y: PLAT.EDGE_Y }, { x, y: PLAT.DOOR_FLOOR, clip: door, speed: 18, then: gone }];
+    } else if (q.mode === 'porterWait') {
+      const door = DOORS[9], x = door + 2;
+      q.mode = 'porter';
+      q.delay = 0.5;
+      q.path = [{ x, y: q.y }, { x, y: PLAT.EDGE_Y, then: r => { r.delay = 1.2; r.handed = true; } }];
+    }
+  }
+}
+
+function boardingDone(st) {
+  return !sim.people.some(q => q.st === st.index &&
+    (q.mode === 'board' || q.mode === 'porter' ||
+     (q.mode === 'alight' && (q.hidden || q.path.length > 2))));
+}
+
+function moveAlong(q, dt) {
+  const wp = q.path[0], dx = wp.x - q.x, dy = wp.y - q.y, dist = Math.hypot(dx, dy);
+  const step = (wp.speed || q.speed) * dt;
+  q.clip = wp.clip === undefined ? null : wp.clip;
+  if (Math.abs(dx) > 0.01) q.dir = dx > 0 ? 1 : -1;
+  q.walking = true;
+  q.anim += Math.min(dist, step) / 3;
+  if (dist <= step) {
+    q.x = wp.x; q.y = wp.y;
+    q.path.shift();
+    q.clip = null;
+    if (wp.then) wp.then(q);
+  } else {
+    q.x += dx / dist * step;
+    q.y += dy / dist * step;
+  }
+}
+
+function updatePerson(q, dt) {
+  q.t += dt;
+  q.walking = false;
+  if (q.delay > 0) {
+    q.delay -= dt;
+    if (q.delay <= 0) q.hidden = false;
+    return;
+  }
+  if (q.path.length) { moveAlong(q, dt); return; }
+  switch (q.mode) {
+    case 'idle': case 'wait': case 'porterWait':
+      if (q.t > q.turnAt) { q.dir = -q.dir; q.turnAt = q.t + 2 + Math.random() * 6; }
+      break;
+    case 'patrol':                                       // tray vendor pacing the platform
+      q.path = [{ x: q.x < (q.ax + q.bx) / 2 ? q.bx : q.ax, y: q.y }];
+      q.delay = 1 + Math.random() * 2;
+      break;
+    case 'porter':                                       // case handed in at the door; head back
+      if (q.handed) {
+        forgetPerson({ d: q.d });
+        q.d = q.d2;
+        q.mode = 'leave';
+        q.path = [{ x: q.x, y: 161 }, { x: W + 30, y: 161, then: gone }];
+      }
+      break;
+  }
+}
+
+function updatePeople(dt) {
+  for (const st of STATIONS)
+    if (!sim.populated.has(st.index) && Math.abs(st.dist - sim.dist) < 1000) populateStation(st);
+  for (const q of sim.people) updatePerson(q, dt);
+  let n = 0;
+  for (const q of sim.people) {
+    if (q.gone || Math.abs(STATIONS[q.st].dist - sim.dist) > 1200) { forgetPerson(q); continue; }
+    sim.people[n++] = q;
+  }
+  sim.people.length = n;
+}
+
+function forgetPerson(q) {
+  for (const k in VARIANTS) {
+    VARIANTS[k].people.delete(q.d.id);
+    if (q.d2) VARIANTS[k].people.delete(q.d2.id);
+  }
+}
+
+// =====================================================================
+// 8. JOURNEY STATE MACHINE
+// =====================================================================
+//   STOPPED --(stop routine)--> DEPARTING --(ACCEL_TIME)--> TRAVELING
+//      ^                                                        |
+//      +-------- ARRIVING <--(braking distance reached)---------+
+//
+// While STOPPED, a sub-phase runs the station routine:
+//   SETTLE > DOORS_OPEN > BOARDING > DOORS_CLOSE > FLAG > HORN > (depart)
+// and at the last station DOORS_CLOSE leads to TERMINUS instead.
 //
 // Departing and arriving follow a smoothstep velocity curve (zero
 // acceleration at both ends). Position is the exact integral of that
 // curve, so the train always comes to rest exactly at the platform.
 const sim = {
-  state: 'STOPPED', timer: 0,
+  state: 'STOPPED', stopPhase: 'SETTLE', phaseT: 0, timer: 0,
   speed: 0, dist: 0,                       // dist = world px travelled = camera x
   segStart: 0, segSpeed: 0, segDur: 0,     // current accel / brake segment
-  nextStop: CONFIG.STATION_SPACING,
-  wheelAngle: 0, swayPhase: 0,
+  station: 0,                              // index of the last station stopped at
+  nextStop: 0,
+  doorOpen: 0,                             // 0 closed .. 1 open
+  wheelAngle: 0, swayPhase: 0, clock: 0,
   dayTime: CONFIG.START_DAY_TIME, cloudDrift: 0,
   smoke: [], smokeAcc: 0,
+  people: [], populated: new Set(),
 };
 
 const smoothstep = u => u * u * (3 - 2 * u);
@@ -902,22 +1712,71 @@ function setState(s) {
   sim.state = s;
   sim.timer = 0;
   sim.segStart = sim.dist;
+  sim.stopPhase = null;
   if (s === 'ARRIVING') {
     // fit the braking curve to the remaining distance: d = v0 * T / 2
     sim.segSpeed = sim.speed;
     sim.segDur = 2 * (sim.nextStop - sim.dist) / sim.speed;
   } else if (s === 'STOPPED') {
     sim.speed = 0;
-    sim.nextStop = sim.dist + CONFIG.STATION_SPACING;
+    setStopPhase('SETTLE');
+    sim.nextStop = sim.station < LAST_STATION ? STATIONS[sim.station + 1].dist : Infinity;
   }
+}
+
+function setStopPhase(ph) {
+  sim.stopPhase = ph;
+  sim.phaseT = 0;
+}
+
+function updateStop(dt) {
+  const st = STATIONS[sim.station];
+  sim.phaseT += dt;
+  switch (sim.stopPhase) {
+    case 'SETTLE':
+      if (sim.phaseT >= CONFIG.SETTLE_TIME) setStopPhase('DOORS_OPEN');
+      break;
+    case 'DOORS_OPEN':
+      sim.doorOpen = Math.min(1, sim.phaseT / CONFIG.DOOR_TIME);
+      if (sim.doorOpen >= 1) { startBoarding(st); setStopPhase('BOARDING'); }
+      break;
+    case 'BOARDING':
+      if ((sim.phaseT > 1 && boardingDone(st)) || sim.phaseT >= CONFIG.BOARD_TIMEOUT) setStopPhase('DOORS_CLOSE');
+      break;
+    case 'DOORS_CLOSE':
+      sim.doorOpen = Math.max(0, 1 - sim.phaseT / CONFIG.DOOR_TIME);
+      if (sim.doorOpen <= 0) setStopPhase(sim.station === LAST_STATION ? 'TERMINUS' : 'FLAG');
+      break;
+    case 'FLAG':                                          // guard waves the green flag
+      if (sim.phaseT >= CONFIG.FLAG_TIME) { setStopPhase('HORN'); playHorn(); }
+      break;
+    case 'HORN':
+      if (sim.phaseT >= CONFIG.HORN_TIME) setState('DEPARTING');
+      break;
+    case 'TERMINUS':
+      if (sim.phaseT >= 1.5) ui.complete = true;
+      break;
+  }
+}
+
+// Back to Kamalapur with a fresh crowd
+function startJourney() {
+  for (const q of sim.people) forgetPerson(q);
+  sim.people.length = 0;
+  sim.populated.clear();
+  sim.smoke.length = 0;
+  sim.station = 0;
+  sim.dist = STATIONS[0].dist;
+  sim.doorOpen = 0;
+  setState('STOPPED');
+  ui.complete = false;
 }
 
 function updateJourney(dt) {
   const V = CONFIG.CRUISE_SPEED;
   switch (sim.state) {
     case 'STOPPED':
-      sim.timer += dt;
-      if (sim.timer >= CONFIG.STOP_TIME) setState('DEPARTING');
+      updateStop(dt);
       break;
 
     case 'DEPARTING': {
@@ -941,7 +1800,8 @@ function updateJourney(dt) {
       sim.speed = sim.segSpeed * (1 - smoothstep(u));
       sim.dist = sim.segStart + sim.segSpeed * T * (u - u ** 3 + u ** 4 / 2);
       if (u >= 1) {
-        sim.dist = sim.nextStop;
+        sim.station++;
+        sim.dist = STATIONS[sim.station].dist;
         setState('STOPPED');
       }
       break;
@@ -969,6 +1829,9 @@ function skipTimeOfDay() {
 
 function update(dt) {
   updateJourney(dt);
+  updatePeople(dt);
+  updateUI(dt);
+  sim.clock += dt;
   sim.dayTime = (sim.dayTime + dt) % CONFIG.DAY_LENGTH;
   sim.cloudDrift += dt * 1.5;
   sim.wheelAngle = (sim.wheelAngle + sim.speed * dt / CONFIG.WHEEL_R) % (Math.PI / 2);
@@ -977,9 +1840,174 @@ function update(dt) {
 }
 
 // =====================================================================
-// 7. MAIN LOOP
+// 9. UI, SOUND AND INPUT
 // =====================================================================
 const canvas = document.getElementById('screen');
+const ui = { bannerY: -40, bannerSt: 1, complete: false, panelY: -110, hover: false, debugW: 0 };
+const input = { debug: true, fast: false };
+
+function updateUI(dt) {
+  const next = sim.station + 1;
+  const show = next <= LAST_STATION &&
+    (sim.state === 'ARRIVING' || (sim.state === 'TRAVELING' && sim.nextStop - sim.dist < 900));
+  if (show) ui.bannerSt = next;                           // latched while it slides out
+  ui.bannerY += ((show ? 3 : -40) - ui.bannerY) * Math.min(1, dt * 5);
+  ui.panelY += ((ui.complete ? 44 : -110) - ui.panelY) * Math.min(1, dt * 4);
+}
+
+// "NEXT STATION: <bangla> / <english>", pre-rendered once per station
+const bannerCache = [];
+function bannerSprite(i) {
+  if (bannerCache[i]) return bannerCache[i];
+  const st = STATIONS[i], m = st.bnMask, label = 'NEXT STATION:';
+  const lw = textWidth(label), ew = textWidth(st.en), h = Math.max(m.h, 5) + 8;
+  const w = 6 + lw + 6 + m.w + 5 + 3 + 5 + ew + 6;
+  const [c, g] = makeCanvas(w, h);
+  rect(g, 0, 0, w, h, PALETTE.slate);
+  rect(g, 1, 1, w - 2, h - 2, PALETTE.ink);
+  rect(g, 1, h - 2, w - 2, 1, PALETTE.green);
+  const ty = (h - 5) >> 1;
+  let x = 6;
+  drawText(g, label, x, ty, PALETTE.grayLight);  x += lw + 6;
+  drawMask(g, m, x, (h - m.h) >> 1, PALETTE.glow); x += m.w + 5;
+  drawText(g, '/', x, ty, PALETTE.slate);          x += 8;
+  drawText(g, st.en, x, ty, PALETTE.white);
+  return (bannerCache[i] = c);
+}
+
+function drawBanner(g) {
+  const b = bannerSprite(ui.bannerSt), y = Math.round(ui.bannerY);
+  if (y <= -b.height) return;
+  g.drawImage(b, Math.max(input.debug ? ui.debugW + 4 : 2, (W - b.width) >> 1), y);
+}
+
+// "Journey complete" panel with a restart button (normal + hover sprites)
+const PANEL = { w: 172, h: 64 };
+const COMPLETE_BN = textMask('যাত্রা সম্পন্ন', CONFIG.BN_SIZE);
+let panelSprites = null;
+
+function panelButton() {
+  const bw = textWidth('RESTART TRIP') + 12, bh = 11;
+  return { x: (PANEL.w - bw) >> 1, y: PANEL.h - bh - 6, w: bw, h: bh };
+}
+
+function buildPanel(hover) {
+  const { w, h } = PANEL, [c, g] = makeCanvas(w, h), m = COMPLETE_BN;
+  const first = STATIONS[0], last = STATIONS[LAST_STATION];
+  rect(g, 0, 0, w, h, PALETTE.slate);
+  rect(g, 1, 1, w - 2, h - 2, PALETTE.ink);
+  const title = 'JOURNEY COMPLETE';
+  drawText2x(g, title, (w - title.length * 8 + 2) >> 1, 7, PALETTE.glow);
+  drawMask(g, m, (w - m.w) >> 1, 21, PALETTE.white);
+  const route = first.en + ' > ' + last.en + '  ' + (last.km - first.km) + ' KM';
+  drawText(g, route, (w - textWidth(route)) >> 1, 25 + m.h, PALETTE.grayLight);
+  const b = panelButton();
+  rect(g, b.x, b.y, b.w, b.h, PALETTE.grassLight);
+  rect(g, b.x + 1, b.y + 1, b.w - 2, b.h - 2, hover ? PALETTE.grass : PALETTE.green);
+  drawText(g, 'RESTART TRIP', b.x + 6, b.y + 3, PALETTE.white);
+  return c;
+}
+
+function drawPanel(g) {
+  const y = Math.round(ui.panelY);
+  if (y <= -PANEL.h) return;
+  panelSprites = panelSprites || [buildPanel(false), buildPanel(true)];
+  g.drawImage(panelSprites[ui.hover ? 1 : 0], (W - PANEL.w) >> 1, y);
+}
+
+function buttonHit(x, y) {
+  if (!ui.complete) return false;
+  const b = panelButton(), bx = ((W - PANEL.w) >> 1) + b.x, by = Math.round(ui.panelY) + b.y;
+  return x >= bx && x < bx + b.w && y >= by && y < by + b.h;
+}
+
+function drawDebug(g) {
+  const stopped = sim.state === 'STOPPED';
+  const st = STATIONS[stopped ? sim.station : Math.min(sim.station + 1, LAST_STATION)];
+  const lines = [
+    'STATE ' + sim.state + (stopped ? ' ' + sim.stopPhase.replace('_', ' ') : ''),
+    'SPEED ' + sim.speed.toFixed(1) + ' PX/S',
+    'DIST  ' + Math.floor(sim.dist) + ' PX',
+    (stopped ? 'AT    ' : 'NEXT  ') + st.en,
+    stopped ? 'PEOPLE ' + sim.people.length : 'IN    ' + Math.ceil(sim.nextStop - sim.dist) + ' PX',
+    'TIME  ' + phaseLabel(sim.dayTime),
+  ];
+  if (input.fast) lines.push('FAST FORWARD X' + CONFIG.FAST_FACTOR);
+  lines.push('D DEBUG  F FAST  T TIME', 'M SOUND ' + (audio.muted ? 'OFF' : 'ON') + '  R RESTART');
+  const w = Math.max(...lines.map(textWidth)) + 6, h = lines.length * 7 + 4;
+  rect(g, 2, 2, w, h, PALETTE.slate);
+  rect(g, 3, 3, w - 2, h - 2, PALETTE.ink);
+  lines.forEach((s, i) =>
+    drawText(g, s, 5, 5 + i * 7, i >= lines.length - 2 ? PALETTE.grayLight : i === 0 ? PALETTE.glow : PALETTE.white));
+  ui.debugW = w + 2;
+}
+
+// --- sound: synthesised diesel horn (browsers unlock audio on first input)
+const audio = { ctx: null, muted: false };
+
+function unlockAudio() {
+  if (!audio.ctx) {
+    try { audio.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  }
+  if (audio.ctx.state === 'suspended') audio.ctx.resume();
+}
+
+// Three sawtooth voices (a minor-ish chord, like a twin-tone air horn)
+// through a low-pass filter, with a short pitch scoop at the start
+function playHorn() {
+  const ac = audio.ctx;
+  if (!ac || audio.muted || ac.state !== 'running') return;
+  const t0 = ac.currentTime, dur = 1.25;
+  const out = ac.createGain();
+  out.gain.setValueAtTime(0, t0);
+  out.gain.linearRampToValueAtTime(0.12, t0 + 0.06);
+  out.gain.setValueAtTime(0.12, t0 + dur - 0.2);
+  out.gain.linearRampToValueAtTime(0, t0 + dur);
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 1600;
+  lp.connect(out);
+  out.connect(ac.destination);
+  for (const f of [277.2, 349.2, 415.3]) {
+    const o = ac.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f * 0.96, t0);
+    o.frequency.linearRampToValueAtTime(f, t0 + 0.1);
+    o.connect(lp);
+    o.start(t0);
+    o.stop(t0 + dur + 0.05);
+  }
+}
+
+// --- input --------------------------------------------------------------
+addEventListener('keydown', e => {
+  unlockAudio();
+  if (e.code === 'KeyF') input.fast = true;
+  if (e.repeat) return;
+  if (e.code === 'KeyD') input.debug = !input.debug;
+  if (e.code === 'KeyT') skipTimeOfDay();
+  if (e.code === 'KeyM') audio.muted = !audio.muted;
+  if (e.code === 'KeyR' || (ui.complete && (e.code === 'Enter' || e.code === 'Space'))) startJourney();
+});
+addEventListener('keyup', e => { if (e.code === 'KeyF') input.fast = false; });
+addEventListener('blur', () => { input.fast = false; });
+
+function toInternal(e) {
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
+}
+canvas.addEventListener('pointermove', e => {
+  ui.hover = buttonHit(...toInternal(e));
+  canvas.style.cursor = ui.hover ? 'pointer' : 'default';
+});
+canvas.addEventListener('pointerdown', e => {
+  unlockAudio();
+  if (buttonHit(...toInternal(e))) { startJourney(); ui.hover = false; canvas.style.cursor = 'default'; }
+});
+
+// =====================================================================
+// 10. MAIN LOOP
+// =====================================================================
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
@@ -999,14 +2027,16 @@ function renderScene(g, v) {
   const d = sim.dist;
   g.drawImage(v.sky, 0, 0);                                               // 1. sky (static)
   drawTiled(g, v.clouds, d * PARALLAX.clouds + sim.cloudDrift, LAYER_Y.clouds); // 2. clouds
+  drawBackdrops(g, v, 'far');                                             //    city, hills
   drawTiled(g, v.far, d * PARALLAX.far, LAYER_Y.far);                     // 3. tree line
   drawTiled(g, v.mid, d * PARALLAX.mid, LAYER_Y.mid);                     // 4. fields, houses
+  drawBackdrops(g, v, 'mid');                                             //    river, tea
   drawTiled(g, v.poles, d * PARALLAX.track, LAYER_Y.poles);               // 5. poles + wires
-  drawStations(g, v);
   drawTiled(g, v.track, d * PARALLAX.track, LAYER_Y.track);               //    gravel, rails
   drawTrain(g, v);
   drawSmoke(g, v);
   drawTiled(g, v.fg, d * PARALLAX.fg, LAYER_Y.fg);                        // 6. grass tufts
+  drawStationFront(g, v);                                                 //    platform, people
 }
 
 function render() {
@@ -1022,40 +2052,11 @@ function render() {
     bctx.globalCompositeOperation = 'source-over';
     ctx.drawImage(bufB, 0, 0);
   }
+  ui.debugW = 0;
   if (input.debug) drawDebug(ctx);
+  drawBanner(ctx);
+  drawPanel(ctx);
 }
-
-function drawDebug(g) {
-  const S = CONFIG.STATION_SPACING, names = CONFIG.STATION_NAMES;
-  const stopped = sim.state === 'STOPPED';
-  const stn = names[Math.round((stopped ? sim.dist : sim.nextStop) / S) % names.length];
-  const lines = [
-    'STATE ' + sim.state,
-    'SPEED ' + sim.speed.toFixed(1) + ' PX/S',
-    'DIST  ' + Math.floor(sim.dist) + ' PX',
-    stopped ? 'AT    ' + stn : 'NEXT  ' + stn,
-    stopped ? 'DEPART IN ' + Math.ceil(CONFIG.STOP_TIME - sim.timer) + 'S'
-            : 'IN    ' + Math.ceil(sim.nextStop - sim.dist) + ' PX',
-    'TIME  ' + phaseLabel(sim.dayTime),
-  ];
-  if (input.fast) lines.push('FAST FORWARD X' + CONFIG.FAST_FACTOR);
-  lines.push('D DEBUG  F FAST  T TIME');
-  const w = Math.max(...lines.map(textWidth)) + 6, h = lines.length * 7 + 4;
-  rect(g, 2, 2, w, h, PALETTE.slate);
-  rect(g, 3, 3, w - 2, h - 2, PALETTE.ink);
-  lines.forEach((s, i) =>
-    drawText(g, s, 5, 5 + i * 7, i === lines.length - 1 ? PALETTE.grayLight : i === 0 ? PALETTE.glow : PALETTE.white));
-}
-
-// --- input ------------------------------------------------------------
-const input = { debug: true, fast: false };
-addEventListener('keydown', e => {
-  if (e.code === 'KeyD' && !e.repeat) input.debug = !input.debug;
-  if (e.code === 'KeyF') input.fast = true;
-  if (e.code === 'KeyT' && !e.repeat) skipTimeOfDay();
-});
-addEventListener('keyup', e => { if (e.code === 'KeyF') input.fast = false; });
-addEventListener('blur', () => { input.fast = false; });
 
 // --- scale to the window, keeping 16:9 --------------------------------
 function fit() {
@@ -1081,6 +2082,7 @@ function frame(now) {
   render();
   requestAnimationFrame(frame);
 }
+startJourney();
 requestAnimationFrame(now => { last = now; render(); requestAnimationFrame(frame); });
 </script>
 </body>
