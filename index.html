@@ -2,20 +2,59 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#140c1c">
 <title>Intercity Pixel Train</title>
 <style>
   html, body { margin: 0; height: 100%; background: #140c1c; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
+  body {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    touch-action: manipulation; -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.below { flex-direction: column; }          /* portrait: toolbar under the picture */
+  body.side { flex-direction: row; }              /* wide screens: toolbar beside it */
   canvas {
     display: block;
     image-rendering: crisp-edges;
     image-rendering: pixelated;
+    touch-action: manipulation;
   }
+  #bar { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  body.side #bar { flex-direction: column; flex-wrap: nowrap; }
+  body.overlay #bar {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(6px + env(safe-area-inset-bottom)); flex-wrap: nowrap;
+  }
+  body.overlay #bar button { opacity: 0.85; }
+  #bar button {
+    width: 48px; height: 48px; padding: 0; margin: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    background: #1b1f3b; color: #f4f4ec; border: 2px solid #4a4f84; border-radius: 0;
+    font: bold 9px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 0.5px;
+    cursor: pointer; touch-action: manipulation;
+  }
+  #bar button:hover { border-color: #6aaee0; }
+  #bar button:active { background: #2c2f5e; }
+  #bar button:focus-visible { outline: 2px solid #ffd65c; outline-offset: 1px; }
+  #bar button.on { color: #ffd65c; border-color: #ffd65c; }
+  #bar button.big { font-size: 15px; }
+  #bar svg { width: 20px; height: 20px; shape-rendering: crispEdges; fill: currentColor; }
+  #bar button > * { pointer-events: none; }       /* taps always land on the button itself */
 </style>
 </head>
 <body>
 <canvas id="screen" width="320" height="180"></canvas>
+<div id="bar" role="toolbar" aria-label="Train controls">
+  <button id="b-pause" type="button" aria-label="Pause" title="Pause (P)"><svg viewBox="0 0 16 16"></svg><span>PAUSE</span></button>
+  <button id="b-speed" type="button" class="big" aria-label="Speed 1x" title="Speed (1 / 2 / 4)">1x</button>
+  <button id="b-skip" type="button" aria-label="Skip to next station" title="Next station (N)"><svg viewBox="0 0 16 16"><path d="M3 3h2v1h2v1h2v1h1v1h1v2h-1v1h-1v1H7v1H5v1H3zM12 3h2v10h-2z"/></svg><span>NEXT</span></button>
+  <button id="b-time" type="button" aria-label="Time of day" title="Time of day (T)"><svg viewBox="0 0 16 16"></svg><span>AUTO</span></button>
+  <button id="b-rain" type="button" aria-label="Rain" title="Rain (W)"><svg viewBox="0 0 16 16"><path d="M5 2h5v1h2v1h1v2h1v3H1V6h1V4h1V3h2zM3 11h1v2H3zM7 11h1v2H7zM11 11h1v2h-1zM5 13h1v2H5zM9 13h1v2H9z"/></svg><span>AUTO</span></button>
+  <button id="b-mute" type="button" aria-label="Sound" title="Sound (M)"><svg viewBox="0 0 16 16"></svg><span>TAP</span></button>
+</div>
 <script>
 'use strict';
 
@@ -34,7 +73,6 @@ const CONFIG = {
   BRAKE_TIME: 6,                        // s, cruise -> 0 (nominal)
   PX_PER_KM: 20,                        // route km -> world px (compressed)
   TERRAIN_BLEND: 300,                   // world px over which one landscape fades into the next
-  FLUFF_MAX: 60,                        // kash seed fluff drifting across the screen
 
   // station stop sequence (seconds)
   SETTLE_TIME: 0.8,                     // brakes settle before doors open
@@ -43,19 +81,30 @@ const CONFIG = {
   FLAG_TIME: 2.2,                       // guard waves the green flag
   HORN_TIME: 1.6,                       // horn, then depart
 
-  DAY_LENGTH: 180,                      // s for a full day/night cycle
-  START_DAY_TIME: 20,
+  // time of day follows the trip: early morning at Kamalapur, night at Sylhet
+  HOUR_START: 5.6, HOUR_END: 20.4,
+  HOUR_EASE: 3,                         // max game hours per second when time jumps (skip, T)
+
+  // weather: light monsoon spells (seeded, so every trip gets the same ones)
+  RAIN_GAP: [35, 80],                   // s of dry weather between spells
+  RAIN_SPELL: [14, 28],                 // s a spell lasts
+  LIGHTNING_RATE: 0.05,                 // strikes per second while it pours
 
   TRAIN_FRONT_X: 273,                   // screen x of the headlight
   LOCO_W: 46, CAR_W: 39, CAR_GAP: 2, CAR_COUNT: 5,
   WHEEL_R: 3.5, WHEEL_FRAMES: 6,
-  SMOKE_MAX: 70,
   BN_SIZE: 11,                          // px size Bangla text is rasterised at
+
+  // particle pools [normal, low quality]; nothing is allocated while running
+  SMOKE_MAX: [70, 40], RAIN_MAX: [180, 100], SPLASH_MAX: [60, 30],
+  SPARK_MAX: [70, 36], FIREFLY_MAX: [40, 20], BIRD_MAX: [8, 5], FLUFF_MAX: [60, 30],
+  LOW_QUALITY_MS: 11,                   // average frame cost that switches to low quality
 };
 
 // The route, in travel order. To add a station, add an entry: only en,
 // bn and km are required, everything else falls back to STATION_DEFAULTS.
 //   en / bn   English and Bangla names shown on the board and banner
+//   code      three letters for the route map
 //   km        distance from Kamalapur along the line (approximate)
 //   platform  [left, right] screen x of the platform while stopped here
 //   roof      'umbrella' | 'canopy' | 'shelter'
@@ -65,15 +114,15 @@ const CONFIG = {
 //             landscape along the line itself comes from TERRAIN below)
 //   extras    station-specific props / characters ('porter', 'fish')
 const ROUTE = [
-  { en: 'KAMALAPUR', bn: 'কমলাপুর', km: 0,
+  { en: 'KAMALAPUR', bn: 'কমলাপুর', code: 'DHK', km: 0,
     platform: [-330, 650], roof: 'umbrella', crowd: 15, alight: 0, idle: 14,
     backdrop: ['city'], extras: ['porter'] },
-  { en: 'BHAIRAB BAZAR', bn: 'ভৈরব বাজার', km: 82,
+  { en: 'BHAIRAB BAZAR', bn: 'ভৈরব বাজার', code: 'BRB', km: 82,
     platform: [-90, 400], roof: 'canopy', roofColor: 'red', crowd: 6, alight: 4, idle: 4,
     extras: ['fish'] },
-  { en: 'SRIMANGAL', bn: 'শ্রীমঙ্গল', km: 234,
+  { en: 'SRIMANGAL', bn: 'শ্রীমঙ্গল', code: 'SMG', km: 234,
     platform: [4, 318], roof: 'shelter', crowd: 2, alight: 2, idle: 1 },
-  { en: 'SYLHET', bn: 'সিলেট', km: 319,
+  { en: 'SYLHET', bn: 'সিলেট', code: 'SYL', km: 319,
     platform: [-60, 380], roof: 'canopy', crowd: 0, alight: 12, idle: 2 },
 ];
 const STATION_DEFAULTS = { platform: [-40, 360], roof: 'canopy', roofColor: 'green',
@@ -106,14 +155,17 @@ const PLAT = { TOP: 148, EDGE_Y: 152, WALK_MIN: 154, WALK_MAX: 169,
                DOOR_TOP: 125, DOOR_FLOOR: 136,
                STALL_X: 280, STALL_Y: 163, BOARD_X: 132 };
 
-// Time-of-day keyframes: [seconds, lighting]. Between two different
-// lightings the scene cross-fades with an ordered dither.
-const DAY_KEYS = [[0, 'day'], [70, 'day'], [80, 'dusk'], [92, 'dusk'], [102, 'night'],
-                  [150, 'night'], [160, 'dusk'], [166, 'dusk'], [176, 'day'], [180, 'day']];
-const HOLD_STARTS = [0, 80, 102, 160];  // T key jumps between these
+// Palette lighting by hour of day: [hour, lighting]. Between two different
+// lightings the world cross-fades with an ordered dither; the sky, the
+// colour tint and the glow of lamps follow the hour smoothly on top.
+const LIGHT_KEYS = [[0, 'night'], [4.6, 'night'], [5.4, 'dusk'], [6.4, 'dusk'], [7.4, 'day'],
+                    [17.0, 'day'], [17.9, 'dusk'], [18.9, 'dusk'], [19.9, 'night'], [24, 'night']];
+// The time-of-day button / T key cycles these; AUTO follows the trip
+const TIME_MODES = [['AUTO', null], ['DAY', 12], ['DUSK', 18.3], ['NIGHT', 22.5]];
 
 // =====================================================================
-// 2. PALETTE  (32 colours - nothing else ever reaches the screen)
+// 2. PALETTE  (32 colours for every sprite and tile; only the time-of-day
+//    sky, the colour tint and the additive glow pass add colours on top)
 // =====================================================================
 const PALETTE = {
   ink:      '#140c1c', navy:      '#1b1f3b', indigo:     '#2c2f5e', slate:     '#4a4f84',
@@ -126,8 +178,8 @@ const PALETTE = {
   grassLight:'#86c04a', paddy:    '#c4c95a', haze:       '#4f7f6c', blue:      '#2a5a9c',
 };
 
-// Lighting never tints: each lighting remaps palette keys onto other
-// palette keys, and every sprite is pre-rendered once per lighting.
+// Palette lighting: each lighting remaps palette keys onto other palette
+// keys, and every sprite is pre-rendered once per lighting.
 // Light sources (lit windows, lamps, headlight) use PALETTE directly;
 // p.glow / p.amber are yellow *paint* (safety line, signs) and do darken.
 const LIGHTING = {
@@ -167,6 +219,22 @@ function mulberry32(seed) {
   };
 }
 const randInt = (rng, a, b) => a + Math.floor(rng() * (b - a + 1));
+
+// Object pools: items[0 .. n-1] are alive. Spawning reuses a dead slot and
+// killing swaps the last live item into the hole, so nothing is allocated
+// while the game runs.
+function makePool(size, make) { return { items: Array.from({ length: size }, make), n: 0 }; }
+function poolSpawn(pool, max) { return pool.n < Math.min(max, pool.items.length) ? pool.items[pool.n++] : null; }
+function poolKill(pool, i) {
+  const dead = pool.items[i];
+  pool.items[i] = pool.items[--pool.n];
+  pool.items[pool.n] = dead;
+}
+
+// Quality: phones start on the light settings; anything that averages too
+// long per frame drops to them too (see frame())
+const quality = { low: typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches, ema: 0 };
+const cap = name => CONFIG[name][quality.low ? 1 : 0];
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -465,19 +533,6 @@ function buildCar(p, lit, seed) {
   rect(g, 17, 17, 5, 2, p.grayDark);
   return c;
 }
-
-// Dithered headlight beam, only used in lit (dusk / night) variants
-function buildBeam() {
-  const [c, g] = makeCanvas(56, 30);
-  for (let x = 0; x < 56; x++) {
-    const cy = 2 + x * 0.32, half = 1 + x * 0.22;
-    const dens = Math.max(1, 7 - Math.floor(x / 8));
-    for (let y = Math.floor(cy - half); y <= Math.ceil(cy + half); y++)
-      if (y >= 0 && y < 30 && bayer(x, y) < dens) px(g, x, y, x < 16 ? PALETTE.glow : PALETTE.peach);
-  }
-  return c;
-}
-
 function drawBogie(g, p, a, b) {
   rect(g, a - 3, 143, b - a + 7, 1, p.gray);          // side frame
   rect(g, a - 2, 144, b - a + 5, 1, p.grayDark);
@@ -509,8 +564,7 @@ function drawTrain(g, v) {
     g.drawImage(i === 0 ? v.loco : v.cars[i - 1], veh.x, veh.y + swayOffset(i));
   });
   drawDoors(g, v);
-  if (v.beam) g.drawImage(v.beam, CONFIG.TRAIN_FRONT_X + 1, LAYER_Y.loco + 4);
-  if (sim.state === 'STOPPED' && sim.stopPhase === 'HORN') drawHornWaves(g, p);
+  if (sim.hornWave > 0) drawHornWaves(g, p);
 }
 
 // Left pixel column of every carriage door (two per carriage)
@@ -530,7 +584,7 @@ function drawDoors(g, v) {
 
 function drawHornWaves(g, p) {
   const hx = TRAIN.vehicles[0].x + 42, hy = LAYER_Y.loco + 1;
-  const ph = Math.floor(sim.phaseT * 8) % 3;
+  const ph = Math.floor(sim.clock * 8) % 3;
   for (let i = 0; i < 3; i++) {
     if ((i + ph) % 3 === 2) continue;                                   // flicker outward
     const r = 2 + i * 3;
@@ -541,15 +595,16 @@ function drawHornWaves(g, p) {
 // --- exhaust smoke -----------------------------------------------------
 // Puffs live in screen space. Air is still relative to the world, so a
 // puff's x velocity relaxes towards -speed: faster train, faster drift.
+const smokePool = makePool(CONFIG.SMOKE_MAX[0], () => ({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0, r0: 0, grow: 0, shade: 0 }));
+
 function emitPuff(heavy) {
-  if (sim.smoke.length >= CONFIG.SMOKE_MAX) sim.smoke.shift();
-  sim.smoke.push({
-    x: TRAIN.stackX + Math.random(), y: TRAIN.stackY,
-    vx: 0, vy: -(heavy ? 26 : 16) - Math.random() * 8,
-    age: 0, life: (heavy ? 3.2 : 2.2) + Math.random(),
-    r0: heavy ? 1.5 : 0.8, grow: (heavy ? 2.4 : 1.6) + Math.random(),
-    shade: heavy ? 0 : 1,
-  });
+  const s = poolSpawn(smokePool, cap('SMOKE_MAX'));
+  if (!s) return;
+  s.x = TRAIN.stackX + Math.random(); s.y = TRAIN.stackY;
+  s.vx = 0; s.vy = -(heavy ? 26 : 16) - Math.random() * 8;
+  s.age = 0; s.life = (heavy ? 3.2 : 2.2) + Math.random();
+  s.r0 = heavy ? 1.5 : 0.8; s.grow = (heavy ? 2.4 : 1.6) + Math.random();
+  s.shade = heavy ? 0 : 1;
 }
 
 function updateSmoke(dt) {
@@ -561,28 +616,28 @@ function updateSmoke(dt) {
   sim.smokeAcc += rate * dt;
   while (sim.smokeAcc >= 1) { sim.smokeAcc -= 1; emitPuff(revving); }
   const windX = -(sim.speed + 4), kx = Math.min(1, dt * 2.2), ky = Math.min(1, dt * 1.5);
-  let n = 0;
-  for (const s of sim.smoke) {
+  for (let i = 0; i < smokePool.n; ) {
+    const s = smokePool.items[i];
     s.age += dt;
     s.vx += (windX - s.vx) * kx;
     s.vy += (-5 - s.vy) * ky;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    if (s.age < s.life && s.x > -16 && s.y > -16) sim.smoke[n++] = s;
+    if (s.age < s.life && s.x > -16 && s.y > -16) i++;
+    else poolKill(smokePool, i);
   }
-  sim.smoke.length = n;
 }
 
 const SMOKE_SHADES = ['grayDark', 'gray', 'grayLight', 'cloudShade'];
 
 // Dithered puff sprites, cached per lighting / radius / density / shade
 function puffSprite(v, r, dens, shade) {
-  const key = r + '|' + dens + '|' + shade;
+  const key = (r * 17 + dens) * 4 + shade;
   let c = v.puffs[key];
   if (!c) {
     let g;
     [c, g] = makeCanvas(r * 2 + 1, r * 2 + 1);
-    g.fillStyle = v.p[shade];
+    g.fillStyle = v.p[SMOKE_SHADES[shade]];
     for (let y = -r; y <= r; y++)
       for (let x = -r; x <= r; x++)
         if (x * x + y * y <= (r + 0.5) * (r + 0.5) && bayer(x + r, y + r) < dens) g.fillRect(x + r, y + r, 1, 1);
@@ -592,11 +647,11 @@ function puffSprite(v, r, dens, shade) {
 }
 
 function drawSmoke(g, v) {
-  for (const s of sim.smoke) {
-    const t = s.age / s.life;
+  for (let i = 0; i < smokePool.n; i++) {
+    const s = smokePool.items[i], t = s.age / s.life;
     const r = Math.min(7, Math.floor(s.r0 + s.age * s.grow));
     const dens = 16 - Math.min(3, Math.floor(t * 4)) * 4;          // 16, 12, 8, 4 -> fades out
-    const shade = SMOKE_SHADES[Math.min(3, s.shade + Math.floor(t * 3))];
+    const shade = Math.min(3, s.shade + Math.floor(t * 3));
     g.drawImage(puffSprite(v, r, dens, shade), Math.round(s.x) - r, Math.round(s.y) - r);
   }
 }
@@ -695,68 +750,6 @@ function hump(g, x, base, w, h, col, ridge, tint) {
     if (tint) for (let y = t; y < Math.min(base, t + 6); y++) if (bayer(x + i, y) < 7 - (y - t)) px(g, x + i, y, tint);
     if (ridge && bayer(x + i, t) < 10) px(g, x + i, t, ridge);
   }
-}
-
-// --- 1. sky gradient (static, banded with dithered edges) -------------
-const SKY_BANDS = {
-  day:   [['skyDeep', 0], ['skyMid', 44], ['skyLight', 88]],
-  dusk:  [['navy', 0], ['indigo', 16], ['slate', 32], ['purple', 50], ['rose', 68], ['orange', 84], ['peach', 98]],
-  night: [['ink', 0], ['navy', 34], ['indigo', 72], ['slate', 104]],
-};
-// Daytime skies of particular sections (SECTIONS[..].sky); after dark every
-// section shares the plain dusk / night sky
-const SKY_MOODS = {
-  deep: [['skyDeep', 0], ['skyMid', 84], ['skyLight', 110]],     // kash: deep autumn blue
-  mist: [['skyMid', 0], ['skyLight', 34], ['cloudShade', 86]],   // Sylhet: pale and hazy
-};
-
-function buildSkies(name) {
-  const normal = buildSky(name, SKY_BANDS[name]), out = { normal };
-  for (const m in SKY_MOODS) out[m] = name === 'day' ? buildSky(name, SKY_MOODS[m]) : normal;
-  return out;
-}
-
-function buildSky(name, bandDef) {
-  const [c, g] = makeCanvas(W, H);
-  const img = g.createImageData(W, H);
-  const bands = bandDef.map(([k, y]) => [hexToRgb(PALETTE[k]), y]);
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
-      const jitter = (bayer(x, y) / 16 - 0.5) * 10;
-      let k = 0;
-      for (let j = 1; j < bands.length; j++) if (y >= bands[j][1] + jitter) k = j;
-      const i = (y * W + x) * 4, rgb = bands[k][0];
-      img.data[i] = rgb[0]; img.data[i + 1] = rgb[1]; img.data[i + 2] = rgb[2]; img.data[i + 3] = 255;
-    }
-  g.putImageData(img, 0, 0);
-
-  const halo = (cx, cy, r0, r1, col, level) => {
-    for (let y = -r1; y <= r1; y++)
-      for (let x = -r1; x <= r1; x++) {
-        const d = Math.hypot(x, y);
-        if (d > r0 && d <= r1 && bayer(cx + x, cy + y) < level) px(g, cx + x, cy + y, col);
-      }
-  };
-  if (name === 'day') {
-    halo(252, 24, 7, 11, PALETTE.skyLight, 5);
-    disc(g, 252, 24, 7, PALETTE.glow);
-    disc(g, 252, 24, 5, PALETTE.white);
-  } else if (name === 'dusk') {
-    halo(228, 104, 11, 17, PALETTE.peach, 6);
-    disc(g, 228, 104, 11, PALETTE.peach);
-    disc(g, 228, 104, 8, PALETTE.glow);
-  } else {
-    const rng = mulberry32(3);
-    for (let i = 0; i < 90; i++) {
-      const x = randInt(rng, 0, W - 1), y = randInt(rng, 0, 96), r = rng();
-      px(g, x, y, r < 0.6 ? PALETTE.grayLight : r < 0.9 ? PALETTE.cloudShade : PALETTE.white);
-    }
-    halo(150, 26, 6, 10, PALETTE.slate, 6);
-    disc(g, 150, 26, 6, PALETTE.cloudShade);
-    disc(g, 149, 25, 4, PALETTE.white);
-    px(g, 152, 27, PALETTE.grayLight); px(g, 148, 28, PALETTE.grayLight); px(g, 151, 23, PALETTE.cloudShade);
-  }
-  return c;
 }
 
 // --- 2. far clouds (0.05x) -------------------------------------------
@@ -950,10 +943,9 @@ function buildVariant(name) {
   const backdrops = {};
   for (const key in BACKDROPS) backdrops[key] = BACKDROPS[key].build(p, def.lit);
   return {
-    name, lit: def.lit, p, rgba, puffs: {}, people: new Map(),
+    name, lit: def.lit, p, rgba, puffs: [], people: new Map(),
     sprites: new Map(),                                   // terrain sprites, painted on first use
     chunks: { far: new Map(), mid: new Map(), fg: new Map() },
-    sky: buildSkies(name),
     clouds: buildClouds(p),
     cumulus: buildCumulus(p),
     poles: buildPoles(p),
@@ -968,7 +960,6 @@ function buildVariant(name) {
     loco: buildLoco(p, def.lit),
     cars: Array.from({ length: CONFIG.CAR_COUNT }, (_, i) => buildCar(p, def.lit, i)),
     wheels: buildWheels(p),
-    beam: def.lit ? buildBeam() : null,
     backdrops,
     props: buildProps(p, def.lit),
     stations: STATIONS.map(st => buildStationSprites(st, p)),
@@ -992,7 +983,7 @@ function buildVariant(name) {
 // dither across the blend zone; objects are spawned with a probability
 // equal to their section's weight, so they thin out instead of being cut.
 const ANCHOR_X = W / 2;
-const CHUNK_W = 128;                                // multiple of 4: dither lines up across chunks
+const CHUNK_W = 64;                                 // multiple of 4: dither lines up across chunks; small = short builds
 
 const TLAYERS = [
   { key: 'far', f: PARALLAX.far, y: LAYER_Y.far, h: 60, seed: 21, hiRows: null },
@@ -1017,19 +1008,23 @@ function setupTerrain() {
   BRIDGE.u1 = BRIDGE.u0 + BRIDGE.spans * BRIDGE.span;
 }
 
-// Sections at world position u: a, b are TERRAIN indices, t the weight of b
-function terrainAt(u) {
-  const half = CONFIG.TERRAIN_BLEND / 2;
-  for (let i = 1; i < TERRAIN.length; i++) {
+// Sections at world position u: a, b are TERRAIN indices, t the weight of b.
+// Writes into out (a shared scratch object unless one is passed), so read
+// the result before the next call.
+const TERRAIN_TMP = { a: 0, b: 0, t: 0 }, TERRAIN_SW = { a: 0, b: 0, t: 0 };
+function terrainAt(u, out = TERRAIN_TMP) {
+  const half = CONFIG.TERRAIN_BLEND / 2, n = TERRAIN.length;
+  out.a = out.b = n - 1; out.t = 0;
+  for (let i = 1; i < n; i++) {
     const b = TERRAIN[i].u;
-    if (u < b - half) return { a: i - 1, b: i - 1, t: 0 };
-    if (u < b + half) return { a: i - 1, b: i, t: smoothstep((u - b + half) / (2 * half)) };
+    if (u < b - half) { out.a = out.b = i - 1; break; }
+    if (u < b + half) { out.a = i - 1; out.b = i; out.t = smoothstep((u - b + half) / (2 * half)); break; }
   }
-  return { a: TERRAIN.length - 1, b: TERRAIN.length - 1, t: 0 };
+  return out;
 }
 
 function sectionWeight(id, u) {
-  const w = terrainAt(u);
+  const w = terrainAt(u, TERRAIN_SW);
   return (TERRAIN[w.a].id === id ? 1 - w.t : 0) + (TERRAIN[w.b].id === id ? w.t : 0);
 }
 
@@ -1123,18 +1118,25 @@ function drawTerrain(g, v, L, afterGround) {
   let lo = 0, hi = live.length;
   const start = cam - L.span - 4;
   while (lo < hi) { const m = (lo + hi) >> 1; if (live[m].x0 < start) lo = m + 1; else hi = m; }
-  for (let i = lo; i < live.length && live[i].x0 <= cam + W + 4; i++) if (live[i].x1 >= cam - 4) list.push(live[i]);
-  list.sort((a, b) => a.z - b.z);
-  for (const e of list) e.draw(g, v, -cam, L.y, t);
+  for (let i = lo; i < live.length && live[i].x0 <= cam + W + 4; i++)
+    if (live[i].x1 >= cam - 4 && !(live[i].lod && quality.low)) list.push(live[i]);
+  list.sort(byZ);
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    e.draw(g, v, -cam, L.y, t);
+    if (e.light) addLight(e.light[0] - cam, e.light[1] + L.y, LIGHT_WINDOW);
+  }
 }
+const byZ = (a, b) => a.z - b.z;
 
 // Pixels flagged by a section's hl() light up under the crests of the wind
 // waves: strips of rows, each a little behind the one above, so the bands
 // sweep diagonally across paddy, kash and tea.
+const crestX = [], crestHi = [];
 function drawWindCrests(g, v, L, cam, k0, k1) {
-  const chunks = [];
-  for (let k = k0; k <= k1; k++) { const ch = terrainChunk(v, L, k); if (ch.hi) chunks.push([k * CHUNK_W - cam, ch.hi]); }
-  if (!chunks.length) return;
+  crestX.length = crestHi.length = 0;
+  for (let k = k0; k <= k1; k++) { const ch = terrainChunk(v, L, k); if (ch.hi) { crestX.push(k * CHUNK_W - cam); crestHi.push(ch.hi); } }
+  if (!crestX.length) return;
   const [r0, r1] = L.hiRows, t = sim.clock;
   for (let y = r0; y < r1; y += 3) {
     const rows = Math.min(3, r1 - y);
@@ -1143,9 +1145,9 @@ function drawWindCrests(g, v, L, cam, k0, k1) {
       const on = x < W && windAt(uOf(L, x + cam) - (y - r0) * 7, t) > 0.38;
       if (on && run < 0) run = x;
       else if (!on && run >= 0) {
-        for (const [cx, hc] of chunks) {
-          const a = Math.max(run, cx), b = Math.min(x, cx + CHUNK_W);
-          if (b > a) g.drawImage(hc, a - cx, y, b - a, rows, a, L.y + y, b - a, rows);
+        for (let j = 0; j < crestX.length; j++) {
+          const cx = crestX[j], a = Math.max(run, cx), b = Math.min(x, cx + CHUNK_W);
+          if (b > a) g.drawImage(crestHi[j], a - cx, y, b - a, rows, a, L.y + y, b - a, rows);
         }
         run = -1;
       }
@@ -1168,18 +1170,29 @@ function cached(v, key, w, h, paint) {
 // A still object that has to sort by depth with the live ones (houses in
 // front of swaying palms); painted once per lighting
 function spriteEnt(lx, y, w, h, ax, ay, key, paint) {
-  return { x0: lx - ax, x1: lx - ax + w, z: y, draw(g, v, ox, oy) {
+  return { x0: lx - ax, x1: lx - ax + w, z: y, warm: v => cached(v, key, w, h, paint), draw(g, v, ox, oy) {
     g.drawImage(cached(v, key, w, h, paint), lx - ax + ox, y - ay + oy);
   } };
 }
 
 // A plant that leans with the passing wind waves (one sprite per lean)
 function swayer(L, lx, y, kind, a = 0, b = 0) {
-  const S = SWAY[kind], [w, h, ax, ay] = S.size(a, b), u = uOf(L, lx);
-  return { x0: lx - ax, x1: lx - ax + w, z: y, draw(g, v, ox, oy, t) {
-    const lean = leanAt(u - y * 4, t);
-    const spr = cached(v, kind + a + '|' + b + '|' + lean, w, h, (sg, p) => S.paint(sg, p, lean, a, b, ax, ay));
-    g.drawImage(spr, lx - ax + ox, y - ay + oy);
+  const S = SWAY[kind], [w, h, ax, ay] = S.size(a, b), u = uOf(L, lx), key = kind + a + '|' + b;
+  const frames = v => {                                // all four leans, painted together
+    let f = v.sprites.get(key);
+    if (!f) {
+      f = [];
+      for (let lean = -1; lean <= 2; lean++) {
+        const [c, g] = makeCanvas(w, h);
+        S.paint(g, v.p, lean, a, b, ax, ay);
+        f.push(c);
+      }
+      v.sprites.set(key, f);
+    }
+    return f;
+  };
+  return { x0: lx - ax, x1: lx - ax + w, z: y, warm: frames, draw(g, v, ox, oy, t) {
+    g.drawImage(frames(v)[leanAt(u - y * 4, t) + 1], lx - ax + ox, y - ay + oy);
   } };
 }
 
@@ -1354,14 +1367,15 @@ function fogBands(ctx, y0, y1, gap, dens) {
   for (let x = ctx.from; x < ctx.to; x += randInt(rng, gap, gap * 2)) {
     const w = randInt(rng, 60, 150), h = randInt(rng, 4, 8), y = randInt(rng, y0, y1), ph = rng() * 6, drift = randInt(rng, 20, 50), lx = x;
     if (!ctx.ok(x + (w >> 1))) continue;
-    ctx.live({ x0: lx - drift, x1: lx + w + drift, z: 100 + y, draw(g, v, ox, oy, t) {
-      g.drawImage(fogSprite(v, w, h, dens), Math.round(lx + Math.sin(t * 0.03 + ph) * drift) + ox, y + oy);
+    const key = 'fog' + w + '|' + h + '|' + dens;
+    ctx.live({ x0: lx - drift, x1: lx + w + drift, z: 100 + y, warm: v => fogSprite(v, key, w, h, dens), draw(g, v, ox, oy, t) {
+      g.drawImage(fogSprite(v, key, w, h, dens), Math.round(lx + Math.sin(t * 0.03 + ph) * drift) + ox, y + oy);
     } });
   }
 }
 
-function fogSprite(v, w, h, dens) {
-  return cached(v, 'fog' + w + '|' + h + '|' + dens, w, h, (g, p) => {
+function fogSprite(v, key, w, h, dens) {
+  return cached(v, key, w, h, (g, p) => {
     for (let y = 0; y < h; y++)
       for (let x = 0; x < w; x++) {
         const ex = Math.min(1, Math.min(x, w - 1 - x) / (w * 0.3)), ey = 1 - Math.abs((y + 0.5) / h * 2 - 1);
@@ -1412,8 +1426,11 @@ function villageMid(ctx) {
     for (let i = randInt(rng, 1, 3); i > 0; i--) {                     // houses in front
       const hx = vx + randInt(rng, 0, cw - 16), hw = randInt(rng, 10, 16), fence = rng() < 0.6 ? randInt(rng, 4, 10) : 0;
       const tin = rng() < 0.8, roll = rng();
-      if (ctx.ok(hx)) ctx.live(spriteEnt(hx, G + 2, hw + fence + 3, 10, 1, 10, 'house' + hx + '|' + hw,
-        (g, p, lit) => house(g, 1, 10, hw, p, tin, lit && roll < 0.7, fence)));
+      if (!ctx.ok(hx)) continue;
+      const e = spriteEnt(hx, G + 2, hw + fence + 3, 10, 1, 10, 'house' + hx + '|' + hw,
+        (g, p, lit) => house(g, 1, 10, hw, p, tin, lit && roll < 0.7, fence));
+      if (roll < 0.7) e.light = [hx + hw - 4, G - 1];      // its window glows after dark
+      ctx.live(e);
     }
     vx += cw + randInt(rng, 30, 110);
   }
@@ -1566,12 +1583,15 @@ function riverFg(ctx) {
 }
 
 // --- 3. kash phool chars -----------------------------------------------------
+// Every other plant is skipped on low quality (the densest thing on screen)
+let thinCount = 0;
+const thinOut = e => { if (++thinCount & 1) e.lod = true; return e; };
 function kashMid(ctx) {
   const { rng, L } = ctx;
   for (let row = 0; row < 2; row++)
     for (let x = ctx.from + randInt(rng, 0, 6); x < ctx.to; x += randInt(rng, 5, 11)) {
       const y = 34 + row * 3 + randInt(rng, 0, 1), h = randInt(rng, 9, 13), v = randInt(rng, 0, 2);
-      if (ctx.ok(x)) ctx.live(swayer(L, x, y, 'kash', h, v));
+      if (ctx.ok(x)) ctx.live(thinOut(swayer(L, x, y, 'kash', h, v)));
     }
 }
 
@@ -1589,7 +1609,7 @@ function kashFg(ctx) {
   for (const [base, hMin, hMax] of [[17, 8, 11], [22, 9, 13], [27, 10, 14], [32, 11, 16]])
     for (let x = ctx.from + randInt(rng, 0, 6); x < ctx.to; x += randInt(rng, 5, 10)) {
       const y = base + randInt(rng, -1, 1), h = randInt(rng, hMin, hMax), v = randInt(rng, 0, 2);
-      if (ctx.ok(x)) ctx.live(swayer(L, x, y, 'kash', h, v));
+      if (ctx.ok(x)) ctx.live(thinOut(swayer(L, x, y, 'kash', h, v)));
     }
 }
 
@@ -1834,47 +1854,56 @@ function fisherEnt(lx, wl, rng, big) {
   } };
 }
 
+// Mirror painter for the small figures drawn live: set origin and facing
+// once, then plot offsets in palette keys (no closures in the frame loop)
+const MP = { g: null, p: null, x: 0, y: 0, dir: 1 };
+function mpAt(g, p, x, y, dir) { MP.g = g; MP.p = p; MP.x = x; MP.y = y; MP.dir = dir; }
+function mp(dx, dy, key) { MP.g.fillStyle = MP.p[key]; MP.g.fillRect(MP.x + dx * MP.dir, MP.y + dy, 1, 1); }
+function mpRect(dx, dy, w, h, key) {
+  MP.g.fillStyle = MP.p[key];
+  MP.g.fillRect(MP.dir > 0 ? MP.x + dx : MP.x - dx - w + 1, MP.y + dy, w, h);
+}
+
 function drawFisher(g, v, x, y, c, dir, s, d, shirt, lungi) {
-  const p = v.p, P = (dx, dy, k) => px(g, x + dx * dir, y + dy, k);
+  mpAt(g, v.p, x, y, dir);
   const hl = 5 * s;
-  for (let i = -hl; i <= hl; i++) P(i, 0, p.brownDark);                     // hull, raised at both ends
-  for (let i = -hl + 1; i < hl; i++) P(i, -1, p.brown);
-  for (const e of [-1, 1]) { P(e * (hl + 1), -1, p.brown); P(e * (hl + 1), -2, p.brown); P(e * (hl + 2), 1, p.skyLight); }
-  const phase = c < 2.5 ? 'hold' : c < 3.1 ? 'raise' : c < 3.8 ? 'throw' : c < 5.5 ? 'wait' : 'haul';
-  const fx = -hl + 2 * s;                                                    // he stands at the stern
+  mpRect(-hl, 0, 2 * hl + 1, 1, 'brownDark');                               // hull, raised at both ends
+  mpRect(-hl + 1, -1, 2 * hl - 1, 1, 'brown');
+  for (let e = -1; e <= 1; e += 2) { mp(e * (hl + 1), -1, 'brown'); mp(e * (hl + 1), -2, 'brown'); mp(e * (hl + 2), 1, 'skyLight'); }
+  const phase = c < 2.5 ? 0 : c < 3.1 ? 1 : c < 3.8 ? 2 : c < 5.5 ? 3 : 4;   // hold, raise, throw, wait, haul
+  const fx = -hl + 2 * s, up = phase === 1 || phase === 2;                   // he stands at the stern
   let hx, hy;                                                                // his hand
   if (d) {
-    const up = phase === 'raise' || phase === 'throw';
     g.drawImage(personSprite(v, d, up ? 6 : 0, dir), x + fx * dir - PERSON_CX, y - 1 - PERSON_FY);
     hx = fx + (up ? 2 : 1); hy = up ? -10 : -5;          // hand position in personSprite frames 6 / 0
   } else {
-    const bent = phase === 'haul';
-    P(fx, -2, p[lungi]); P(fx, -3, p[lungi]); P(fx, -4, p[shirt]);
-    P(fx + (bent ? 1 : 0), -5, bent ? p.brown : p[shirt]);
-    if (!bent) P(fx, -6, p.brown);
-    const up = phase === 'raise' || phase === 'throw';
+    const bent = phase === 4;
+    mp(fx, -2, lungi); mp(fx, -3, lungi); mp(fx, -4, shirt);
+    mp(fx + (bent ? 1 : 0), -5, bent ? 'brown' : shirt);
+    if (!bent) mp(fx, -6, 'brown');
     hx = fx + 1; hy = up ? -7 : -4;
-    P(hx, hy, p.brown);
+    mp(hx, hy, 'brown');
   }
   const D = 9 * s, R = 4 * s;
-  const ring = (cx, cy, r, keep) => {
-    const n = 6 + r * 2;
-    for (let i = 0; i < n; i++) {
-      const a = Math.PI * i / (n - 1), qx = Math.round(cx + Math.cos(a) * r), qy = Math.round(cy - Math.sin(a) * r * 0.45);
-      if (keep(qx, qy)) P(qx, qy, p.grayLight);
-    }
-  };
-  if (phase === 'hold') P(hx, hy + 1, p.grayDark);
-  else if (phase === 'raise') P(hx, hy - 1, p.grayLight);
-  else if (phase === 'throw') {
-    const k = (c - 3.1) / 0.7, cx = hx + k * (D - hx), cy = hy * (1 - k) - Math.sin(k * Math.PI) * 4 * s;
-    ring(cx, cy, 1 + k * (R - 1), () => true);
+  if (phase === 0) mp(hx, hy + 1, 'grayDark');
+  else if (phase === 1) mp(hx, hy - 1, 'grayLight');
+  else if (phase === 2) {
+    const k = (c - 3.1) / 0.7;
+    netRing(hx + k * (D - hx), hy * (1 - k) - Math.sin(k * Math.PI) * 4 * s, 1 + k * (R - 1), -1);
   } else {
-    const k = phase === 'wait' ? 0 : (c - 5.5) / 1.5;
+    const k = phase === 3 ? 0 : (c - 5.5) / 1.5;
     const cx = Math.round(D + (hx - D) * k), r = Math.max(1, Math.round(R * (1 - k * 0.8)));
-    const sink = phase === 'wait' ? (c - 3.8) / 1.7 : 0.9;
-    ring(cx, -1, r, (qx, qy) => bayer(qx + x, qy + y) >= sink * 12);
-    for (let i = 1; i < 4; i++) P(Math.round(hx + (cx - hx) * i / 4), Math.round(hy + (-1 - hy) * i / 4), p.grayDark);   // the line
+    netRing(cx, -1, r, phase === 3 ? (c - 3.8) / 1.7 : 0.9);
+    for (let i = 1; i < 4; i++) mp(Math.round(hx + (cx - hx) * i / 4), Math.round(hy + (-1 - hy) * i / 4), 'grayDark');   // the line
+  }
+}
+
+// The cast net as a half ellipse of knots; sink 0..1 dissolves it
+function netRing(cx, cy, r, sink) {
+  const n = Math.round(6 + r * 2);
+  for (let i = 0; i < n; i++) {
+    const a = Math.PI * i / (n - 1), qx = Math.round(cx + Math.cos(a) * r), qy = Math.round(cy - Math.sin(a) * r * 0.45);
+    if (sink < 0 || bayer(qx + MP.x, qy + MP.y) >= sink * 12) mp(qx, qy, 'grayLight');
   }
 }
 
@@ -1893,35 +1922,36 @@ function hyacinthEnt(lx, y, rng) {
 function duckEnt(pd, rng) {
   const ph = rng() * 6, sp = 0.15 + rng() * 0.2, range = pd.rx - 5, y = pd.cy + randInt(rng, -pd.ry + 2, pd.ry - 1), white = rng() < 0.6;
   return { x0: pd.cx - pd.rx, x1: pd.cx + pd.rx, z: y, draw(g, v, ox, oy, t) {
-    const p = v.p, a = t * sp + ph, x = Math.round(pd.cx + Math.sin(a) * range) + ox, dir = Math.cos(a) >= 0 ? 1 : -1;
-    const yy = y + oy - (Math.sin(t * 2.3 + ph) > 0.7 ? 1 : 0), body = white ? p.white : p.tan;
-    px(g, x + dir, yy - 2, white ? body : p.greenDark);                      // head
-    px(g, x + 2 * dir, yy - 2, p.orange);                                    // bill
-    for (let i = -1; i <= 1; i++) px(g, x + i, yy - 1, body);
-    px(g, x - 2 * dir, yy - 2, body);                                        // tail up
-    if (Math.abs(Math.cos(a)) > 0.3) { px(g, x - 3 * dir, yy, p.skyLight); px(g, x - 4 * dir, yy + 1, p.skyLight); }   // wake
+    const a = t * sp + ph, dir = Math.cos(a) >= 0 ? 1 : -1, body = white ? 'white' : 'tan';
+    mpAt(g, v.p, Math.round(pd.cx + Math.sin(a) * range) + ox, y + oy - (Math.sin(t * 2.3 + ph) > 0.7 ? 1 : 0), dir);
+    mp(1, -2, white ? body : 'greenDark');                                   // head
+    mp(2, -2, 'orange');                                                     // bill
+    mpRect(-1, -1, 3, 1, body);
+    mp(-2, -2, body);                                                        // tail up
+    if (Math.abs(Math.cos(a)) > 0.3) { mp(-3, 0, 'skyLight'); mp(-4, 1, 'skyLight'); }   // wake
   } };
 }
 
 // A zebu grazing: head down, chewing, now and then looking up; tail swishes
+const COW_LEGS = [-4, -2, 2, 3];
 function cowEnt(lx, y, rng) {
   const ph = rng() * 20, dir = rng() < 0.5 ? 1 : -1;
   const [c0, c1] = pick(rng, [['white', 'cloudShade'], ['tan', 'brown'], ['brown', 'brownDark'], ['white', 'grayDark']]);
   return { x0: lx - 9, x1: lx + 9, z: y, draw(g, v, ox, oy, t) {
-    const p = v.p, x = lx + ox, yy = y + oy, P = (dx, dy, k) => px(g, x + dx * dir, yy + dy, p[k]);
-    for (let i = -4; i < 4; i++) for (let j = -6; j <= -3; j++) P(i, j, c0);
-    for (let i = -3; i < 3; i++) P(i, -3, c1);
-    P(-2, -5, c1); P(-1, -5, c1); P(1, -6, c1);                              // patches
-    P(2, -7, c0); P(3, -7, c0);                                              // hump
-    for (const i of [-4, -2, 2, 3]) { P(i, -2, c1); P(i, -1, c1); }          // legs
-    const up = Math.sin(t * 0.35 + ph) > 0.6;
-    if (up) { P(4, -7, c0); P(5, -7, c0); P(4, -6, c0); P(5, -6, c0); P(6, -6, c0); P(4, -8, c1); P(5, -8, 'cream'); }
-    else {
+    mpAt(g, v.p, lx + ox, y + oy, dir);
+    mpRect(-4, -6, 8, 4, c0);
+    mpRect(-3, -3, 6, 1, c1);
+    mp(-2, -5, c1); mp(-1, -5, c1); mp(1, -6, c1);                            // patches
+    mp(2, -7, c0); mp(3, -7, c0);                                            // hump
+    for (let i = 0; i < 4; i++) mpRect(COW_LEGS[i], -2, 1, 2, c1);           // legs
+    if (Math.sin(t * 0.35 + ph) > 0.6) {                                     // looking up
+      mpRect(4, -7, 2, 2, c0); mp(6, -6, c0); mp(4, -8, c1); mp(5, -8, 'cream');
+    } else {                                                                 // grazing, chewing
       const chew = Math.floor(t * 2 + ph) & 1;
-      P(4, -4, c0); P(5, -4 + chew, c0); P(4, -3 + chew, c0); P(5, -2 + chew, c0); P(5, -1 + chew, 'ink');
+      mp(4, -4, c0); mp(5, -4 + chew, c0); mp(4, -3 + chew, c0); mp(5, -2 + chew, c0); mp(5, -1 + chew, 'ink');
     }
     const swish = Math.floor(t * 3 + ph) % 7 === 0;
-    P(-5, -6, c1); P(swish ? -6 : -5, -5, c1); P(swish ? -7 : -5, -4, 'ink');
+    mp(-5, -6, c1); mp(swish ? -6 : -5, -5, c1); mp(swish ? -7 : -5, -4, 'ink');
   } };
 }
 
@@ -1938,34 +1968,37 @@ function rickshawEnt(a, b, y, rng, bike) {
   } };
 }
 
+const WHEEL_RING = [-1, -2, 0, -2, 1, -2, -2, -1, 2, -1, -2, 0, 2, 0, -2, 1, 2, 1, -1, 2, 0, 2, 1, 2];
+function cycleWheel(cx, cy, spin) {
+  for (let i = 0; i < WHEEL_RING.length; i += 2) mp(cx + WHEEL_RING[i], cy + WHEEL_RING[i + 1], 'ink');
+  mp(cx, cy, 'grayLight');
+  if (spin) { mp(cx, cy - 1, 'gray'); mp(cx, cy + 1, 'gray'); } else { mp(cx - 1, cy, 'gray'); mp(cx + 1, cy, 'gray'); }
+}
+
+function cycleRider(rx, o, pedal) {
+  mpRect(rx, -11, 2, 4, o.shirt);
+  mpRect(rx, -13, 2, 1, 'ink');
+  mpRect(rx, -12, 2, 1, o.skin);
+  mpRect(rx, -7, 2, 2, o.lungi);
+  if (pedal) { mp(rx + 1, -5, o.skin); mp(rx, -4, o.skin); } else { mp(rx, -5, o.skin); mp(rx + 1, -4, o.skin); }
+  mp(rx + 2, -10, o.skin);
+}
+
 function drawRickshaw(g, p, x, y, dir, t, o) {
-  const P = (dx, dy, k) => px(g, x + dx * dir, y + dy, p[k]);
-  const R = (dx, dy, w, h, k) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) P(dx + i, dy + j, k); };
+  mpAt(g, p, x, y, dir);
   const spin = Math.floor(t * 8) & 1, pedal = Math.floor(t * 5) & 1;
-  const wheel = (cx, cy) => {
-    for (const [i, j] of [[-1, -2], [0, -2], [1, -2], [-2, -1], [2, -1], [-2, 0], [2, 0], [-2, 1], [2, 1], [-1, 2], [0, 2], [1, 2]]) P(cx + i, cy + j, 'ink');
-    P(cx, cy, 'grayLight');
-    if (spin) { P(cx, cy - 1, 'gray'); P(cx, cy + 1, 'gray'); } else { P(cx - 1, cy, 'gray'); P(cx + 1, cy, 'gray'); }
-  };
-  const rider = rx => {                                                      // pedalling rider
-    R(rx, -11, 2, 4, o.shirt);
-    P(rx, -13, 'ink'); P(rx + 1, -13, 'ink'); P(rx, -12, o.skin); P(rx + 1, -12, o.skin);
-    R(rx, -7, 2, 2, o.lungi);
-    if (pedal) { P(rx + 1, -5, o.skin); P(rx, -4, o.skin); } else { P(rx, -5, o.skin); P(rx + 1, -4, o.skin); }
-    P(rx + 2, -10, o.skin);
-  };
   if (o.bike) {
-    wheel(-3, -2); wheel(4, -2);
-    R(-2, -4, 6, 1, 'grayDark'); P(0, -5, 'grayDark'); R(3, -7, 1, 3, 'grayDark'); P(4, -8, 'grayDark');
-    if (o.cargo) { R(-5, -6, 3, 2, 'grayLight'); P(-4, -7, 'gray'); }      // milk cans on the carrier
-    rider(0);
+    cycleWheel(-3, -2, spin); cycleWheel(4, -2, spin);
+    mpRect(-2, -4, 6, 1, 'grayDark'); mp(0, -5, 'grayDark'); mpRect(3, -7, 1, 3, 'grayDark'); mp(4, -8, 'grayDark');
+    if (o.cargo) { mpRect(-5, -6, 3, 2, 'grayLight'); mp(-4, -7, 'gray'); }   // milk cans on the carrier
+    cycleRider(0, o, pedal);
   } else {
-    wheel(-4, -2); wheel(5, -2);
-    R(-4, -4, 9, 1, 'grayDark'); R(5, -9, 1, 6, 'grayDark'); P(5, -10, 'grayDark');
-    if (o.pax) { P(-5, -11, 'ink'); P(-5, -10, o.skin); R(-6, -9, 2, 3, o.paxCol); }
-    R(-7, -6, 5, 1, o.hood); R(-7, -5, 5, 1, 'ink'); P(-5, -4, 'glow');    // seat and painted panel
-    R(-7, -13, 5, 1, o.hood); R(-8, -12, 1, 6, o.hood); P(-3, -12, 'glow');  // folded hood
-    rider(2);
+    cycleWheel(-4, -2, spin); cycleWheel(5, -2, spin);
+    mpRect(-4, -4, 9, 1, 'grayDark'); mpRect(5, -9, 1, 6, 'grayDark'); mp(5, -10, 'grayDark');
+    if (o.pax) { mp(-5, -11, 'ink'); mp(-5, -10, o.skin); mpRect(-6, -9, 2, 3, o.paxCol); }
+    mpRect(-7, -6, 5, 1, o.hood); mpRect(-7, -5, 5, 1, 'ink'); mp(-5, -4, 'glow');    // seat and painted panel
+    mpRect(-7, -13, 5, 1, o.hood); mpRect(-8, -12, 1, 6, o.hood); mp(-3, -12, 'glow'); // folded hood
+    cycleRider(2, o, pedal);
   }
 }
 
@@ -1974,40 +2007,47 @@ function drawRickshaw(g, p, x, y, dir, t, o) {
 function pickerEnt(H, i, d, rng) {
   const ph = rng() * 20, cloth = pick(rng, SARIS)[0], skin = pick(rng, SKINS), range = 8;
   return { x0: H.x0 + i - range - 3, x1: H.x0 + i + range + 3, z: 50, draw(g, v, ox, oy, t) {
-    const p = v.p, a = t * 0.06 + ph, j = Math.round(i + Math.sin(a) * range), dir = Math.cos(a) >= 0 ? 1 : -1;
-    const x = H.x0 + j + ox, y = humpTop(j, H.w, H.h, 36) + d + oy;
-    const bend = Math.sin(t * 0.7 + ph * 3) > 0.2;
-    const P = (dx, dy, k) => px(g, x + dx * dir, y + dy, p[k]);
-    P(0, -1, cloth); P(0, -2, cloth); P(0, -3, cloth);
-    if (bend) { P(1, -4, cloth); P(2, -4, skin); P(2, -3, skin); P(-1, -5, 'tan'); P(-1, -4, 'tan'); P(0, -5, 'brown'); }
-    else { P(0, -4, cloth); P(0, -5, skin); P(0, -6, cloth); P(1, -3, skin); P(-1, -5, 'tan'); P(-1, -4, 'tan'); P(-1, -3, 'brown'); }
+    const a = t * 0.06 + ph, j = Math.round(i + Math.sin(a) * range);
+    mpAt(g, v.p, H.x0 + j + ox, humpTop(j, H.w, H.h, 36) + d + oy, Math.cos(a) >= 0 ? 1 : -1);
+    mpRect(0, -3, 1, 3, cloth);
+    mp(-1, -5, 'tan'); mp(-1, -4, 'tan');                                    // basket
+    if (Math.sin(t * 0.7 + ph * 3) > 0.2) { mp(1, -4, cloth); mp(2, -4, skin); mp(2, -3, skin); mp(0, -5, 'brown'); }
+    else { mp(0, -4, cloth); mp(0, -5, skin); mp(0, -6, cloth); mp(1, -3, skin); mp(-1, -3, 'brown'); }
   } };
 }
 
 // --- the line: poles and ballast on land, the bridge over the Meghna -------
+let bridgeX0 = 0, bridgeX1 = 0;                  // screen x of the abutments, set by bridgeX()
 function bridgeX() {
   const cam = Math.floor(sim.dist);
-  return [BRIDGE.u0 - cam + ANCHOR_X, BRIDGE.u1 - cam + ANCHOR_X];
+  bridgeX0 = BRIDGE.u0 - cam + ANCHOR_X;
+  bridgeX1 = BRIDGE.u1 - cam + ANCHOR_X;
 }
 
-function clipX(g, xa, xb, fn) {
+// Clip to a band of screen columns; call g.restore() when it returns true
+function clipBegin(g, xa, xb) {
   xa = Math.max(xa, -64); xb = Math.min(xb, W + 64);
-  if (xb <= xa) return;
+  if (xb <= xa) return false;
   g.save();
   g.beginPath();
   g.rect(xa, 0, xb - xa, H);
   g.clip();
-  fn();
-  g.restore();
+  return true;
+}
+
+function drawLand(g, v, d) {
+  drawTiled(g, v.poles, d, LAYER_Y.poles);
+  drawTiled(g, v.track, d, LAYER_Y.track);
 }
 
 function drawLine(g, v) {
-  const d = sim.dist, [b0, b1] = bridgeX();
-  const land = () => { drawTiled(g, v.poles, d, LAYER_Y.poles); drawTiled(g, v.track, d, LAYER_Y.track); };
-  if (b1 <= -40 || b0 >= W + 40) { land(); return; }
-  clipX(g, -64, b0, land);
-  clipX(g, b1, W + 64, land);
-  clipX(g, b0, b1, () => drawTiled(g, v.deck, d, LAYER_Y.track));
+  const d = sim.dist;
+  bridgeX();
+  const b0 = bridgeX0, b1 = bridgeX1;
+  if (b1 <= -40 || b0 >= W + 40) { drawLand(g, v, d); return; }
+  if (clipBegin(g, -64, b0)) { drawLand(g, v, d); g.restore(); }
+  if (clipBegin(g, b1, W + 64)) { drawLand(g, v, d); g.restore(); }
+  if (clipBegin(g, b0, b1)) { drawTiled(g, v.deck, d, LAYER_Y.track); g.restore(); }
   for (let k = 1; k < BRIDGE.spans; k++) g.drawImage(v.pier, b0 + k * BRIDGE.span - 5, PIER_Y);
   g.drawImage(v.abutment[0], b0 - 14, 147);
   g.drawImage(v.abutment[1], b1 - 2, 147);
@@ -2017,9 +2057,10 @@ function drawLine(g, v) {
 // Far truss behind the train; near truss drawn over it, so the train runs
 // behind the lattice
 function drawTruss(g, v, near) {
-  const [b0] = bridgeX(), spr = near ? v.trussNear : v.trussFar;
+  bridgeX();
+  const spr = near ? v.trussNear : v.trussFar;
   for (let k = 0; k < BRIDGE.spans; k++) {
-    const x = b0 + k * BRIDGE.span;
+    const x = bridgeX0 + k * BRIDGE.span;
     if (x < W && x + spr.width > 0) g.drawImage(spr, x, near ? TRUSS_Y : TRUSS_Y - 4);
   }
 }
@@ -2049,9 +2090,8 @@ function drawReflection(g, v) {
   }
 }
 
-// How much of the train is on the bridge. The audio pass will use this to
-// swap the ballast rumble for a louder, metallic one (onBridge as a flag,
-// bridgeMix 0..1 to cross-fade as the rake runs on and off).
+// How much of the train is on the bridge: onBridge as a flag, bridgeMix
+// 0..1 so the rumble turns louder and more metallic as the rake runs on
 function updateBridge() {
   const rear = sim.dist + TRAIN.vehicles[TRAIN.vehicles.length - 1].x - ANCHOR_X;
   const front = sim.dist + CONFIG.TRAIN_FRONT_X - ANCHOR_X;
@@ -2061,33 +2101,42 @@ function updateBridge() {
 }
 
 // --- screen-space visitors: birds crossing the sky, kash seed fluff -------
+const birdPool = makePool(CONFIG.BIRD_MAX[0], () => ({ kind: '', x: 0, y: 0, vx: 0, depth: 0, age: 0, ph: 0 }));
+const fluffPool = makePool(CONFIG.FLUFF_MAX[0], () => ({ x: 0, y: 0, vx: 0, depth: 0, age: 0, life: 0, ph: 0, big: false }));
+
+function trySpawnBird(si, w, dt) {
+  const b = SECTIONS[TERRAIN[si].id].birds, rng = sim.fxRng;
+  if (!b || w <= 0 || rng() >= b[1] * w * dt) return;
+  const q = poolSpawn(birdPool, cap('BIRD_MAX'));
+  if (!q) return;
+  const left = rng() < 0.3, sp = 14 + rng() * 22;
+  q.kind = b[0]; q.x = left ? -6 : W + 6; q.y = 64 + rng() * 40; q.vx = left ? sp : -sp;
+  q.depth = 0.4 + rng() * 0.3; q.age = 0; q.ph = rng() * 4;
+}
+
 function updateBirds(dt) {
-  const here = terrainAt(sim.dist), rng = sim.fxRng;
-  for (const [si, w] of [[here.a, 1 - here.t], [here.b, here.t]]) {
-    const b = SECTIONS[TERRAIN[si].id].birds;
-    if (!b || w <= 0 || rng() >= b[1] * w * dt || sim.birds.length >= 8) continue;
-    const left = rng() < 0.3, sp = 14 + rng() * 22;
-    sim.birds.push({ kind: b[0], x: left ? -6 : W + 6, y: 64 + rng() * 40, vx: left ? sp : -sp,
-                     depth: 0.4 + rng() * 0.3, age: 0, ph: rng() * 4 });
-  }
-  let n = 0;
-  for (const q of sim.birds) {
+  const here = terrainAt(sim.dist), a = here.a, b = here.b, t = here.t;
+  trySpawnBird(a, 1 - t, dt);
+  if (b !== a) trySpawnBird(b, t, dt);
+  for (let i = 0; i < birdPool.n; ) {
+    const q = birdPool.items[i];
     q.age += dt;
     q.x += (q.vx - sim.speed * q.depth) * dt;          // air is still relative to the ground
     q.y += Math.sin(q.age * 0.9 + q.ph) * 3 * dt;
-    if (q.x > -12 && q.x < W + 12) sim.birds[n++] = q;
+    if (q.x > -12 && q.x < W + 12) i++;
+    else poolKill(birdPool, i);
   }
-  sim.birds.length = n;
 }
 
+const WING_LIFT = [-1, 0, 1, 0];
 function drawBirds(g, v) {
   const p = v.p;
-  for (const q of sim.birds) {
-    const x = Math.round(q.x), y = Math.round(q.y), face = Math.sign(q.vx);
+  for (let n = 0; n < birdPool.n; n++) {
+    const q = birdPool.items[n], x = Math.round(q.x), y = Math.round(q.y), face = Math.sign(q.vx);
     const span = q.kind === 'egret' ? 3 : 2, rate = q.kind === 'hawk' ? 1.5 : q.kind === 'egret' ? 4 : 7;
     let f = Math.floor(q.age * rate + q.ph) % 4;
     if (q.kind === 'hawk' && f !== 2) f = 1;           // mostly gliding
-    const lift = [-1, 0, 1, 0][f];
+    const lift = WING_LIFT[f];
     const body = q.kind === 'hawk' ? p.brownDark : p.white, tip = q.kind === 'gull' ? p.grayDark : q.kind === 'hawk' ? p.ink : p.white;
     for (let i = 1; i <= span; i++) {
       const yy = y + (i === span ? lift : Math.round(lift / 2));
@@ -2105,43 +2154,44 @@ function updateFluff(dt) {
   sim.fluffAcc += 9 * sectionWeight('kash', sim.dist) * dt;
   while (sim.fluffAcc >= 1) {
     sim.fluffAcc -= 1;
-    if (sim.fluff.length >= CONFIG.FLUFF_MAX) continue;
-    const depth = 0.5 + rng() * 0.8;                   // nearer seeds sail past faster and lower
-    sim.fluff.push({ x: rng() * (W + 60), y: depth > 1 ? 140 + rng() * 34 : 100 + rng() * 22, depth,
-                     vx: -(sim.speed * depth) - 6, age: 0, life: 4 + rng() * 5, ph: rng() * 6, big: rng() < 0.3 });
+    const f = poolSpawn(fluffPool, cap('FLUFF_MAX'));
+    if (!f) continue;
+    f.depth = 0.5 + rng() * 0.8;                       // nearer seeds sail past faster and lower
+    f.x = rng() * (W + 60); f.y = f.depth > 1 ? 140 + rng() * 34 : 100 + rng() * 22;
+    f.vx = -(sim.speed * f.depth) - 6; f.age = 0; f.life = 4 + rng() * 5; f.ph = rng() * 6; f.big = rng() < 0.3;
   }
-  let n = 0;
-  for (const f of sim.fluff) {
+  for (let i = 0; i < fluffPool.n; ) {
+    const f = fluffPool.items[i];
     f.age += dt;
     f.vx += (-(sim.speed * f.depth) - 6 - f.vx) * Math.min(1, dt * 1.5);
     f.x += f.vx * dt;
     f.y += (-3 + Math.sin(f.age * 1.7 + f.ph) * 7) * dt;
-    if (f.age < f.life && f.x > -4 && f.y > -4) sim.fluff[n++] = f;
+    if (f.age < f.life && f.x > -4 && f.y > -4) i++;
+    else poolKill(fluffPool, i);
   }
-  sim.fluff.length = n;
 }
 
 function drawFluff(g, v) {
-  for (const f of sim.fluff) {
-    const x = Math.round(f.x), y = Math.round(f.y), fade = (f.life - f.age) * 16;
-    if (bayer(x, y) >= fade) continue;                 // dissolves in its last second
+  for (let i = 0; i < fluffPool.n; i++) {
+    const f = fluffPool.items[i], x = Math.round(f.x), y = Math.round(f.y);
+    if (bayer(x, y) >= (f.life - f.age) * 16) continue;   // dissolves in its last second
     px(g, x, y, v.p.white);
     if (f.big) { px(g, x - 1, y, v.p.cloudShade); px(g, x + 1, y - 1, v.p.cloudShade); }
   }
 }
 
-// Draw with an ordered-dither weight (0..1) on top of what is already there
-function overlay(g, weight, fn) {
-  const level = Math.round(weight * 16);
+// Kash section's big white cumulus, faded in with an ordered dither
+function drawCumulus(g, v, weight) {
+  const level = Math.round(weight * 16), off = sim.dist * 0.07 + sim.cloudDrift * 1.4;
   if (level <= 0) return;
-  if (level >= 16) { fn(g); return; }
-  sctx.clearRect(0, 0, W, H);
-  fn(sctx);
+  if (level >= 16) { drawTiled(g, v.cumulus, off, 2); return; }
+  sctx.clearRect(0, 0, W, 64);
+  drawTiled(sctx, v.cumulus, off, 2);
   sctx.globalCompositeOperation = 'destination-in';
   sctx.fillStyle = DITHER_MASKS[level];
-  sctx.fillRect(0, 0, W, H);
+  sctx.fillRect(0, 0, W, 64);
   sctx.globalCompositeOperation = 'source-over';
-  g.drawImage(scratch, 0, 0);
+  g.drawImage(scratch, 0, 0, W, 64, 0, 0, W, 64);
 }
 
 // =====================================================================
@@ -2187,7 +2237,7 @@ function layoutStation(st) {
   items.push({ type: 'board', x: PLAT.BOARD_X, y: 159 });
   if (st.extras.includes('fish'))
     for (const [x, y] of [[228, 160], [236, 165], [246, 161], [-40, 161], [-30, 166], [346, 162], [356, 167]])
-      if (clear(x)) items.push({ type: 'basket', x, y, v: randInt(rng, 0, 2) });
+      if (clear(x)) items.push({ type: 'basket', key: 'basket' + randInt(rng, 0, 2), x, y });
   return items;
 }
 
@@ -2424,16 +2474,19 @@ function drawBackdrops(g, v, layer) {
 }
 
 // --- near-side platform: slab, then furniture and people sorted by depth
+const frontItems = [], byY = (a, b) => a.y - b.y;
 function drawStationFront(g, v) {
   const cam = Math.floor(sim.dist);
-  for (const st of STATIONS) {
-    const off = st.dist - cam, [L, R] = st.platform;
-    if (L + off >= W + 40 || R + off <= -40) continue;
-    const s = v.stations[st.index];
-    g.drawImage(s.slab, L + off, PLAT.TOP);
-    const items = st.layout.concat(sim.people.filter(q => q.st === st.index && !q.hidden));
-    items.sort((a, b) => a.y - b.y);
-    for (const it of items) it.d ? drawPersonAt(g, v, it, off) : drawProp(g, v, st, it, off);
+  for (let i = 0; i < STATIONS.length; i++) {
+    const st = STATIONS[i], off = st.dist - cam;
+    if (st.platform[0] + off >= W + 40 || st.platform[1] + off <= -40) continue;
+    const s = v.stations[i];
+    g.drawImage(s.slab, st.platform[0] + off, PLAT.TOP);
+    frontItems.length = 0;
+    for (let k = 0; k < st.layout.length; k++) frontItems.push(st.layout[k]);
+    for (let k = 0; k < sim.people.length; k++) { const q = sim.people[k]; if (q.st === i && !q.hidden) frontItems.push(q); }
+    frontItems.sort(byY);
+    for (let k = 0; k < frontItems.length; k++) { const it = frontItems[k]; it.d ? drawPersonAt(g, v, it, off) : drawProp(g, v, st, it, off); }
     g.drawImage(s.roof, s.roofX + off, s.roofY);
   }
 }
@@ -2456,9 +2509,10 @@ function drawProp(g, v, st, it, off) {
     const b = v.stations[st.index].board;
     g.drawImage(b, x - (b.width >> 1), BOARD_TOP);
   } else {
-    const spr = v.props[it.type === 'basket' ? 'basket' + it.v : it.type];
+    const spr = v.props[it.key || it.type];
     g.drawImage(spr.c, x - spr.ax, it.y - spr.ay);
-    if (it.type === 'stall') drawSteam(g, v, x + 9, it.y - 15);
+    if (it.type === 'lamp') addLight(x, it.y - 55, LIGHT_LAMP);
+    else if (it.type === 'stall') { drawSteam(g, v, x + 9, it.y - 15); addLight(x + 11, it.y - 20, LIGHT_BULB); }
   }
 }
 
@@ -2819,12 +2873,13 @@ const sim = {
   station: 0,                              // index of the last station stopped at
   nextStop: 0,
   doorOpen: 0,                             // 0 closed .. 1 open
-  wheelAngle: 0, swayPhase: 0, clock: 0,
-  dayTime: CONFIG.START_DAY_TIME, cloudDrift: 0,
-  smoke: [], smokeAcc: 0,
+  wheelAngle: 0, swayPhase: 0, clock: 0, cloudDrift: 0,
+  hour: CONFIG.HOUR_START, night: 1,       // time of day (0..24) and how dark it is (0..1)
+  smokeAcc: 0, fluffAcc: 0, flyAcc: 0, sparkAcc: 0,
   people: [], populated: new Set(),
-  birds: [], fluff: [], fluffAcc: 0, fxRng: null,
-  onBridge: false, bridgeMix: 0,           // for the audio pass: see updateBridge()
+  fxRng: null, wxRng: null,                // seeded: same birds, fluff and weather every trip
+  onBridge: false, bridgeMix: 0,           // see updateBridge(); drives the bridge rumble
+  shake: 0, hornWave: 0, hornTimer: 8, jointAcc: 0,
 };
 
 const smoothstep = u => u * u * (3 - 2 * u);
@@ -2838,6 +2893,8 @@ function setState(s) {
     // fit the braking curve to the remaining distance: d = v0 * T / 2
     sim.segSpeed = sim.speed;
     sim.segDur = 2 * (sim.nextStop - sim.dist) / sim.speed;
+  } else if (s === 'DEPARTING') {
+    sim.shake = 1.6;                                     // couplings snatch as the train pulls away
   } else if (s === 'STOPPED') {
     sim.speed = 0;
     setStopPhase('SETTLE');
@@ -2869,7 +2926,7 @@ function updateStop(dt) {
       if (sim.doorOpen <= 0) setStopPhase(sim.station === LAST_STATION ? 'TERMINUS' : 'FLAG');
       break;
     case 'FLAG':                                          // guard waves the green flag
-      if (sim.phaseT >= CONFIG.FLAG_TIME) { setStopPhase('HORN'); playHorn(); }
+      if (sim.phaseT >= CONFIG.FLAG_TIME) { setStopPhase('HORN'); playHorn(false); }
       break;
     case 'HORN':
       if (sim.phaseT >= CONFIG.HORN_TIME) setState('DEPARTING');
@@ -2885,10 +2942,11 @@ function startJourney() {
   for (const q of sim.people) forgetPerson(q);
   sim.people.length = 0;
   sim.populated.clear();
-  sim.smoke.length = 0;
-  sim.birds.length = 0;
-  sim.fluff.length = 0;
-  sim.fxRng = mulberry32(2024);            // same birds and fluff every trip
+  smokePool.n = birdPool.n = fluffPool.n = fireflyPool.n = sparkPool.n = 0;
+  sim.fxRng = mulberry32(2024);
+  sim.wxRng = mulberry32(1971);
+  resetWeather();
+  sim.hornTimer = 8;
   sim.station = 0;
   sim.dist = STATIONS[0].dist;
   sim.doorOpen = 0;
@@ -2926,6 +2984,7 @@ function updateJourney(dt) {
       if (u >= 1) {
         sim.station++;
         sim.dist = STATIONS[sim.station].dist;
+        sim.shake = 1.4;                                 // the last jolt as the brakes hold
         setState('STOPPED');
       }
       break;
@@ -2933,22 +2992,485 @@ function updateJourney(dt) {
   }
 }
 
-// --- time of day ------------------------------------------------------
-function lightingAt(t) {
-  for (let i = 0; i < DAY_KEYS.length - 1; i++) {
-    const [t0, a] = DAY_KEYS[i], [t1, b] = DAY_KEYS[i + 1];
-    if (t >= t0 && t < t1) return { a, b, f: a === b ? 0 : (t - t0) / (t1 - t0) };
+// =====================================================================
+// 8b. ATMOSPHERE: time of day, sky, weather, glow and effects
+// =====================================================================
+// --- time of day -------------------------------------------------------
+// sim.hour eases towards its target - the trip's own clock (AUTO) or the
+// hour picked with the time button - so it never jumps
+function journeyHour() {
+  const d0 = STATIONS[0].dist, d1 = STATIONS[LAST_STATION].dist;
+  const p = Math.max(0, Math.min(1, (sim.dist - d0) / (d1 - d0)));
+  return CONFIG.HOUR_START + p * (CONFIG.HOUR_END - CONFIG.HOUR_START);
+}
+
+function updateHour(dt) {
+  const fixed = TIME_MODES[ui.timeMode][1], target = fixed === null ? journeyHour() : fixed;
+  const diff = ((target - sim.hour + 36) % 24) - 12, step = CONFIG.HOUR_EASE * dt;   // shortest way round
+  sim.hour = (sim.hour + Math.max(-step, Math.min(step, diff)) + 24) % 24;
+  sim.night = nightAt(sim.hour);
+}
+
+const LIGHT_TMP = { a: 'day', b: 'day', f: 0 };
+function lightingAt(h) {
+  for (let i = 0; i < LIGHT_KEYS.length - 1; i++) {
+    const k0 = LIGHT_KEYS[i], k1 = LIGHT_KEYS[i + 1];
+    if (h >= k0[0] && h < k1[0]) {
+      LIGHT_TMP.a = k0[1]; LIGHT_TMP.b = k1[1];
+      LIGHT_TMP.f = k0[1] === k1[1] ? 0 : (h - k0[0]) / (k1[0] - k0[0]);
+      return LIGHT_TMP;
+    }
   }
-  return { a: 'day', b: 'day', f: 0 };
+  LIGHT_TMP.a = LIGHT_TMP.b = 'night'; LIGHT_TMP.f = 0;
+  return LIGHT_TMP;
 }
 
-function phaseLabel(t) {
-  return t < 70 ? 'DAY' : t < 102 ? 'DUSK' : t < 150 ? 'NIGHT' : t < 176 ? 'DAWN' : 'DAY';
+// 0 in daylight .. 1 at night: stars, lamps, fireflies
+function nightAt(h) {
+  if (h >= 7 && h <= 17.5) return 0;
+  if (h > 17.5 && h < 20) return smoothstep((h - 17.5) / 2.5);
+  if (h >= 4.5 && h < 7) return 1 - smoothstep((h - 4.5) / 2.5);
+  return 1;
 }
 
-function skipTimeOfDay() {
-  const next = HOLD_STARTS.find(s => s > sim.dayTime);
-  sim.dayTime = next === undefined ? 0 : next;
+const hhmm = h => { const m = Math.floor(h * 60) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+
+// Interpolate a table of [hour, ...hex colours] rows into out (RGB floats)
+function hexRgbF(hex) { const [r, g, b] = hexToRgb(hex); return [r, g, b]; }
+function keyedColours(keys, h, out) {
+  let i = 0;
+  while (i < keys.length - 2 && h >= keys[i + 1][0]) i++;
+  const k0 = keys[i], k1 = keys[i + 1], t = smoothstep(Math.max(0, Math.min(1, (h - k0[0]) / (k1[0] - k0[0]))));
+  for (let c = 0; c < out.length; c++) out[c] = k0[1][c] + (k1[1][c] - k0[1][c]) * t;
+  return out;
+}
+// rows: [hour, [top rgb, mid rgb, horizon rgb] flattened]
+const skyKey = (h, top, mid, hor) => [h, [...hexRgbF(top), ...hexRgbF(mid), ...hexRgbF(hor)]];
+const SKY_KEYS = [
+  skyKey(0, '#0c0e22', '#151a3a', '#262c58'), skyKey(4.6, '#0c0e22', '#151a3a', '#262c58'),
+  skyKey(5.4, '#1b1f3b', '#3a3a6e', '#b85d6e'), skyKey(6.1, '#2c4a84', '#a87a9e', '#f4c27a'),
+  skyKey(7.0, '#3d7fc4', '#8cc4e8', '#f2e2b8'), skyKey(8.5, '#3d7fc4', '#6aaee0', '#a8d8ef'),
+  skyKey(15.6, '#3d7fc4', '#6aaee0', '#a8d8ef'), skyKey(17.0, '#3a6cb0', '#88b2d8', '#f4d08a'),
+  skyKey(18.0, '#2c2f5e', '#b85d6e', '#e8875a'), skyKey(18.8, '#1b1f3b', '#4a4f84', '#b85d6e'),
+  skyKey(19.8, '#0f1228', '#1b1f3b', '#2c2f5e'), skyKey(24, '#0c0e22', '#151a3a', '#262c58'),
+];
+// section moods (daylight only) and rain, as targets the sky leans towards
+const SKY_DEEP = [...hexRgbF('#2a60b2'), ...hexRgbF('#4a92d8'), ...hexRgbF('#9ccff0')];
+const SKY_MIST = [...hexRgbF('#8fb3cf'), ...hexRgbF('#b8c8d6'), ...hexRgbF('#d0d8e0')];
+const SKY_RAIN_DAY = [...hexRgbF('#5d6577'), ...hexRgbF('#7d8596'), ...hexRgbF('#9aa1ad')];
+const SKY_RAIN_NIGHT = [...hexRgbF('#14161e'), ...hexRgbF('#1c1f2a'), ...hexRgbF('#262a36')];
+
+// The sky is a vertical gradient dithered to 4x4 Bayer steps, so it only
+// varies with x & 3: a 4 px strip, repeated as a pattern
+const sky = { strip: null, sg: null, img: null, pattern: null, key: -1, cols: new Float32Array(9), tmp: new Float32Array(9) };
+function updateSky(g) {
+  const d = sim.dist, day = 1 - sim.night, deep = sectionWeight('kash', d) * day, mist = sectionWeight('hills', d) * day;
+  const rain = weather.level;
+  const key = ((Math.round(sim.hour * 60) * 21 + Math.round(deep * 20)) * 21 + Math.round(mist * 20)) * 21 + Math.round(rain * 20);
+  if (key === sky.key) return;
+  sky.key = key;
+  if (!sky.strip) { [sky.strip, sky.sg] = makeCanvas(4, H); sky.img = sky.sg.createImageData(4, H); }
+  const c = keyedColours(SKY_KEYS, sim.hour, sky.cols), t = sky.tmp;
+  for (let i = 0; i < 9; i++) {
+    let v = c[i];
+    v += (SKY_DEEP[i] - v) * deep;
+    v += (SKY_MIST[i] - v) * mist * 0.7;
+    t[i] = SKY_RAIN_NIGHT[i] + (SKY_RAIN_DAY[i] - SKY_RAIN_NIGHT[i]) * day;
+    c[i] = v + (t[i] - v) * rain * 0.65;
+  }
+  const out = new Uint32Array(sky.img.data.buffer), Q = 6;
+  for (let y = 0; y < H; y++) {
+    const a = y < 60 ? 0 : 3, b = y < 60 ? 3 : 6, f = y < 60 ? y / 60 : Math.min(1, (y - 60) / 52);
+    for (let x = 0; x < 4; x++) {
+      const dz = (bayer(x, y) / 16 - 0.5) * Q;
+      const r = Math.round((c[a] + (c[b] - c[a]) * f + dz) / Q) * Q, gg = Math.round((c[a + 1] + (c[b + 1] - c[a + 1]) * f + dz) / Q) * Q,
+            bb = Math.round((c[a + 2] + (c[b + 2] - c[a + 2]) * f + dz) / Q) * Q;
+      out[y * 4 + x] = (255 << 24 | Math.min(255, bb) << 16 | Math.min(255, gg) << 8 | Math.min(255, r)) >>> 0;
+    }
+  }
+  sky.sg.putImageData(sky.img, 0, 0);
+  sky.pattern = g.createPattern(sky.strip, 'repeat');
+}
+
+// --- sun, moon, stars, lightning bolt (behind everything) -----------------
+const STARS = (() => {
+  const rng = mulberry32(3), s = [];
+  for (let i = 0; i < 110; i++) s.push({ x: randInt(rng, 0, W - 1), y: randInt(rng, 0, 100), th: rng(), ph: rng() * 6, big: rng() < 0.08 });
+  return s;
+})();
+
+function celestialSprite(r, rim, core, coreR) {
+  const [c, g] = makeCanvas(r * 2 + 1, r * 2 + 1);
+  disc(g, r, r, r, rim);
+  disc(g, r - (r > 5 ? 1 : 0), r - (r > 5 ? 1 : 0), coreR, core);
+  return c;
+}
+const SUN_SPRITES = [celestialSprite(6, PALETTE.glow, PALETTE.white, 4),     // high
+                     celestialSprite(7, PALETTE.amber, PALETTE.peach, 5),    // getting low
+                     celestialSprite(8, PALETTE.orange, PALETTE.peach, 5)];  // on the horizon
+const MOON = (() => {
+  const [c, g] = makeCanvas(11, 11);
+  disc(g, 5, 5, 5, PALETTE.cloudShade);
+  disc(g, 6, 4, 4, PALETTE.white);
+  for (const [x, y] of [[3, 6], [4, 3], [6, 7], [2, 4]]) px(g, x, y, PALETTE.grayLight);
+  return c;
+})();
+
+const celestial = { sunX: 0, sunY: 0, sunLow: 0, sunUp: false, moonX: 0, moonY: 0, moonUp: false };
+function placeCelestial() {
+  const h = sim.hour;
+  celestial.sunUp = h > 5.4 && h < 18.8;
+  if (celestial.sunUp) {
+    const t = (h - 5.6) / 13, s = Math.sin(Math.max(0, Math.min(1, t)) * Math.PI);
+    celestial.sunX = Math.round(24 + t * (W - 48));
+    celestial.sunY = Math.round(116 - s * 94);
+    celestial.sunLow = 1 - s;
+  }
+  celestial.moonUp = h > 18.2 || h < 6.2;
+  if (celestial.moonUp) {
+    const t = ((h - 18.4 + 24) % 24) / 11.6, s = Math.sin(Math.max(0, Math.min(1, t)) * Math.PI);
+    celestial.moonX = Math.round(30 + t * (W - 60));
+    celestial.moonY = Math.round(110 - s * 84);
+  }
+}
+
+function drawCelestial(g) {
+  const n = sim.night * (1 - weather.level * 0.85), t = sim.clock;
+  if (n > 0.02) {                                       // stars: fade in by threshold, some twinkle
+    for (let i = 0; i < STARS.length; i++) {
+      const s = STARS[i];
+      if (s.th > n * 1.15 - 0.1) continue;
+      const tw = Math.sin(t * 2.3 + s.ph);
+      g.fillStyle = tw > 0.8 ? PALETTE.white : tw > -0.4 ? PALETTE.cloudShade : PALETTE.grayLight;
+      g.fillRect(s.x, s.y, 1, 1);
+      if (s.big && tw > 0.3) { g.fillRect(s.x - 1, s.y, 3, 1); g.fillRect(s.x, s.y - 1, 1, 3); }
+    }
+  }
+  if (celestial.moonUp && n > 0.05) {
+    g.globalAlpha = Math.min(1, n * 1.4);
+    g.drawImage(MOON, celestial.moonX - 5, celestial.moonY - 5);
+    g.globalAlpha = 1;
+  }
+  if (celestial.sunUp) {
+    const low = celestial.sunLow, spr = SUN_SPRITES[low > 0.82 ? 2 : low > 0.55 ? 1 : 0], r = spr.width >> 1;
+    g.globalAlpha = 1 - weather.level * 0.8;            // the sun hides behind rain clouds
+    g.drawImage(spr, celestial.sunX - r, celestial.sunY - r);
+    g.globalAlpha = 1;
+  }
+  if (weather.flash > 0 && weather.boltN) {            // a far-off bolt, behind the hills
+    g.fillStyle = PALETTE.white;
+    for (let i = 0; i < weather.boltN - 1; i++) {
+      const x0 = weather.bolt[i * 2], y0 = weather.bolt[i * 2 + 1], x1 = weather.bolt[i * 2 + 2], y1 = weather.bolt[i * 2 + 3];
+      for (let y = y0; y < y1; y++) g.fillRect(Math.round(x0 + (x1 - x0) * (y - y0) / (y1 - y0)), y, 1, 1);
+    }
+  }
+}
+
+// --- colour tint over the whole picture -----------------------------------
+// [hour, multiply rgb, warm wash rgb + alpha]: a multiply darkens and cools
+// the night, a thin warm wash gilds dawn, golden hour and sunset
+const tintKey = (h, mul, wash, a) => [h, [...hexRgbF(mul), ...hexRgbF(wash), a * 255]];
+const TINT_KEYS = [
+  tintKey(0, '#7a84b4', '#1b1f3b', 0), tintKey(4.6, '#7a84b4', '#1b1f3b', 0),
+  tintKey(5.6, '#c0a8bc', '#f4c27a', 0.08), tintKey(6.6, '#eadad2', '#f4c27a', 0.12),
+  tintKey(7.6, '#ffffff', '#f4c27a', 0), tintKey(16.2, '#ffffff', '#f0a030', 0),
+  tintKey(17.2, '#f8ecdc', '#f0a030', 0.1), tintKey(18.2, '#e6bcaa', '#e8875a', 0.14),
+  tintKey(19.0, '#a496b8', '#b85d6e', 0.06), tintKey(20.0, '#7a84b4', '#1b1f3b', 0),
+  tintKey(24, '#7a84b4', '#1b1f3b', 0),
+];
+const tint = { v: new Float32Array(7), mul: '', wash: '', washA: 0, key: -1 };
+function applyTint(g) {
+  const k = Math.round(sim.hour * 40) * 64 + Math.round(weather.level * 20);
+  if (k !== tint.key) {                                 // rebuild the colour strings only when they change
+    tint.key = k;
+    const c = keyedColours(TINT_KEYS, sim.hour, tint.v), r = weather.level * 0.35;
+    const m = i => Math.round(c[i] + (172 - c[i]) * r);   // rain greys things down
+    tint.mul = 'rgb(' + m(0) + ',' + m(1) + ',' + m(2) + ')';
+    tint.wash = 'rgb(' + Math.round(c[3]) + ',' + Math.round(c[4]) + ',' + Math.round(c[5]) + ')';
+    tint.washA = (c[6] / 255) * (1 - weather.level);
+    tint.plain = c[0] > 252 && c[1] > 252 && c[2] > 252 && r === 0;
+  }
+  if (!tint.plain) {
+    g.globalCompositeOperation = 'multiply';
+    g.fillStyle = tint.mul;
+    g.fillRect(-2, -2, W + 4, H + 4);
+  }
+  if (tint.washA > 0.004) {
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = tint.washA;
+    g.fillStyle = tint.wash;
+    g.fillRect(-2, -2, W + 4, H + 4);
+    g.globalAlpha = 1;
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+
+// --- glow: light sources added on top after dark ---------------------------
+// Lamps and windows register themselves while the world is drawn; the glow
+// pass then adds soft halos with the 'lighter' (additive) blend.
+const LIGHT_LAMP = 0, LIGHT_WINDOW = 1, LIGHT_BULB = 2, LIGHT_MAX = 96;
+const lights = { n: 0, collect: true, x: new Float32Array(LIGHT_MAX), y: new Float32Array(LIGHT_MAX), k: new Uint8Array(LIGHT_MAX) };
+function addLight(x, y, kind) {
+  if (!lights.collect || lights.n >= LIGHT_MAX || x < -20 || x > W + 20) return;
+  lights.x[lights.n] = x; lights.y[lights.n] = y; lights.k[lights.n++] = kind;
+}
+
+function haloSprite(r, rgb, a0) {
+  const [c, g] = makeCanvas(r * 2, r * 2);
+  const grad = g.createRadialGradient(r, r, 0, r, r, r);
+  grad.addColorStop(0, 'rgba(' + rgb + ',' + a0 + ')');
+  grad.addColorStop(0.35, 'rgba(' + rgb + ',' + a0 * 0.35 + ')');
+  grad.addColorStop(1, 'rgba(' + rgb + ',0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, r * 2, r * 2);
+  return c;
+}
+
+const GLOW = (() => {
+  const warm = '255,196,96';
+  const halos = [haloSprite(14, warm, 0.75), haloSprite(6, warm, 0.6), haloSprite(7, '255,214,120', 0.7)];   // by LIGHT_*
+  // every lit carriage and cab window of the rake, pre-composed
+  const [train, tg] = makeCanvas(W, 40), small = haloSprite(5, warm, 0.5), y0 = LAYER_Y.car - 10;
+  tg.globalCompositeOperation = 'lighter';
+  TRAIN.vehicles.forEach((veh, i) => {
+    if (i === 0) { tg.drawImage(haloSprite(7, warm, 0.55), veh.x + 40 - 7, LAYER_Y.loco + 9 - 7 - y0); return; }
+    for (let k = 0; k < 5; k++) tg.drawImage(small, veh.x + 9 + k * 5 - 5, 6 + 10 - 5);
+  });
+  // headlight: a cone of light thrown forward and down onto the track
+  const [cone, cg] = makeCanvas(90, 50), lin = cg.createLinearGradient(0, 0, 90, 0);
+  lin.addColorStop(0, 'rgba(255,236,170,0.55)');
+  lin.addColorStop(0.5, 'rgba(255,226,150,0.2)');
+  lin.addColorStop(1, 'rgba(255,220,140,0)');
+  cg.fillStyle = lin;
+  cg.beginPath(); cg.moveTo(0, 6); cg.lineTo(90, 2); cg.lineTo(90, 50); cg.lineTo(0, 9); cg.closePath(); cg.fill();
+  return { halos, train, trainY: y0, cone, flare: haloSprite(9, '255,240,190', 0.9), door: haloSprite(8, warm, 0.6),
+           fly: haloSprite(4, '220,255,120', 0.9), moon: haloSprite(22, '190,200,255', 0.35),
+           sun: haloSprite(40, '255,170,90', 0.45), spark: haloSprite(3, '255,190,90', 0.9) };
+})();
+
+function drawGlow(g) {
+  const n = sim.night, t = sim.clock;
+  g.globalCompositeOperation = 'lighter';
+  if (n > 0.02) {
+    g.globalAlpha = n * 0.9;
+    g.drawImage(GLOW.train, 0, GLOW.trainY);
+    if (sim.doorOpen > 0.3) for (let i = 0; i < DOORS.length; i++) g.drawImage(GLOW.door, DOORS[i] + 2 - 8, PLAT.DOOR_TOP + 4 - 8);
+    for (let i = 0; i < lights.n; i++) {
+      const spr = GLOW.halos[lights.k[i]], r = spr.width >> 1;
+      g.drawImage(spr, Math.round(lights.x[i]) - r, Math.round(lights.y[i]) - r);
+    }
+    g.globalAlpha = n;
+    g.drawImage(GLOW.cone, CONFIG.TRAIN_FRONT_X, LAYER_Y.loco);
+    g.drawImage(GLOW.flare, CONFIG.TRAIN_FRONT_X - 8, LAYER_Y.loco - 3);
+    for (let i = 0; i < fireflyPool.n; i++) {
+      const f = fireflyPool.items[i], b = Math.sin(f.age * f.rate + f.ph);
+      if (b <= 0.1) continue;
+      g.globalAlpha = n * b * Math.min(1, f.age, f.life - f.age);
+      g.drawImage(GLOW.fly, Math.round(f.x) - 4, Math.round(f.y) - 4);
+    }
+    if (celestial.moonUp) { g.globalAlpha = n * (1 - weather.level); g.drawImage(GLOW.moon, celestial.moonX - 22, celestial.moonY - 22); }
+  }
+  if (celestial.sunUp && celestial.sunLow > 0.5) {      // the low sun blooms
+    g.globalAlpha = (celestial.sunLow - 0.5) * 2 * (1 - weather.level);
+    g.drawImage(GLOW.sun, celestial.sunX - 40, celestial.sunY - 40);
+  }
+  g.globalAlpha = 1;
+  for (let i = 0; i < sparkPool.n; i++) {               // brake sparks
+    const s = sparkPool.items[i], x = Math.round(s.x), y = Math.round(s.y), k = s.age / s.life;
+    g.drawImage(GLOW.spark, x - 3, y - 3);
+    g.fillStyle = k < 0.3 ? PALETTE.white : k < 0.7 ? PALETTE.glow : PALETTE.amber;
+    g.fillRect(x, y, 1, 1);
+    g.fillRect(Math.round(s.x - s.vx * 0.015), Math.round(s.y - s.vy * 0.015), 1, 1);
+  }
+  if (weather.flash > 0.01) {                           // lightning lights up everything for an instant
+    g.globalAlpha = weather.flash * 0.45;
+    g.fillStyle = '#9aa4d8';
+    g.fillRect(-2, -2, W + 4, H + 4);
+    g.globalAlpha = 1;
+  }
+  for (let i = 0; i < fireflyPool.n && n > 0.02; i++) { // firefly cores
+    const f = fireflyPool.items[i];
+    if (Math.sin(f.age * f.rate + f.ph) > 0.5) { g.fillStyle = PALETTE.glow; g.fillRect(Math.round(f.x), Math.round(f.y), 1, 1); }
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+
+// --- fireflies ---------------------------------------------------------------
+const fireflyPool = makePool(CONFIG.FIREFLY_MAX[0], () => ({ x: 0, y: 0, depth: 0, age: 0, life: 0, ph: 0, rate: 0 }));
+function updateFireflies(dt) {
+  const n = sim.night, rng = sim.fxRng;
+  sim.flyAcc += 7 * Math.max(0, n - 0.4) * (1 - sectionWeight('river', sim.dist)) * (1 - weather.level) * dt;
+  while (sim.flyAcc >= 1) {
+    sim.flyAcc -= 1;
+    const f = poolSpawn(fireflyPool, cap('FIREFLY_MAX'));
+    if (!f) continue;
+    f.x = rng() * (W + 40); f.y = 118 + rng() * 58; f.depth = 0.5 + rng() * 0.8;
+    f.age = 0; f.life = 5 + rng() * 6; f.ph = rng() * 6; f.rate = 2 + rng() * 3;
+  }
+  for (let i = 0; i < fireflyPool.n; ) {
+    const f = fireflyPool.items[i];
+    f.age += dt;
+    f.x += (-sim.speed * f.depth + Math.sin(f.age * 1.3 + f.ph) * 6) * dt;
+    f.y += Math.cos(f.age * 1.1 + f.ph) * 4 * dt;
+    if (f.age < f.life && f.x > -8) i++;
+    else poolKill(fireflyPool, i);
+  }
+}
+
+// --- brake sparks --------------------------------------------------------------
+const sparkPool = makePool(CONFIG.SPARK_MAX[0], () => ({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0 }));
+function updateSparks(dt) {
+  if (sim.state === 'ARRIVING' && sim.speed > 4) {
+    const u = Math.min(1, sim.timer / sim.segDur);
+    sim.sparkAcc += 90 * Math.sin(u * Math.PI) * dt;   // hardest braking mid-way
+    while (sim.sparkAcc >= 1) {
+      sim.sparkAcc -= 1;
+      const s = poolSpawn(sparkPool, cap('SPARK_MAX'));
+      if (!s) break;
+      const veh = TRAIN.vehicles[(Math.random() * TRAIN.vehicles.length) | 0];
+      s.x = veh.x + veh.wheels[(Math.random() * 4) | 0]; s.y = LAYER_Y.wheel + 6;
+      s.vx = -(20 + Math.random() * 50); s.vy = -(15 + Math.random() * 45);
+      s.age = 0; s.life = 0.15 + Math.random() * 0.3;
+    }
+  }
+  for (let i = 0; i < sparkPool.n; ) {
+    const s = sparkPool.items[i];
+    s.age += dt;
+    s.vy += 220 * dt;
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    if (s.age < s.life) i++;
+    else poolKill(sparkPool, i);
+  }
+}
+
+// --- camera shake: a jolt when the train starts or stops, a rumble on the bridge
+const shake = { x: 0, y: 0 };
+function updateShake(dt) {
+  sim.shake = Math.max(0, sim.shake - dt * 2.5);
+  const amp = sim.shake + (sim.onBridge ? 0.9 * sim.bridgeMix * sim.speed / CONFIG.CRUISE_SPEED : 0);
+  if (amp < 0.35) { shake.x = shake.y = 0; return; }
+  shake.x = Math.round(Math.sin(sim.clock * 41.3) * amp);
+  shake.y = Math.round(Math.abs(Math.sin(sim.clock * 29.7 + 1)) * amp * 0.8);
+}
+
+// --- weather: monsoon spells, rain, splashes, ripples, lightning ----------------
+const weather = { level: 0, target: 0, timer: 0, acc: 0, flash: 0, flashT: 9, bolt: new Int16Array(24), boltN: 0, thunderIn: -1 };
+const rainPool = makePool(CONFIG.RAIN_MAX[0], () => ({ x: 0, y: 0, vx: 0, vy: 0, depth: 0, gy: 0 }));
+const splashPool = makePool(CONFIG.SPLASH_MAX[0], () => ({ x: 0, y: 0, age: 0, water: false }));
+
+function resetWeather() {
+  weather.level = weather.target = 0;
+  weather.timer = CONFIG.RAIN_GAP[1] * 0.6;            // dry at Kamalapur; the first spell comes on the way
+  weather.flash = 0; weather.flashT = 9; weather.thunderIn = -1;
+  rainPool.n = splashPool.n = 0;
+}
+
+function updateWeather(dt) {
+  const rng = sim.wxRng;
+  if ((weather.timer -= dt) <= 0) {                     // next spell, or the end of this one
+    const raining = weather.target > 0;
+    weather.target = raining ? 0 : 0.55 + rng() * 0.45;
+    weather.timer = raining ? randInt(rng, ...CONFIG.RAIN_GAP) : randInt(rng, ...CONFIG.RAIN_SPELL);
+  }
+  const target = ui.rainMode === 1 ? 1 : ui.rainMode === 2 ? 0 : weather.target;
+  weather.level += Math.max(-0.2 * dt, Math.min(0.2 * dt, target - weather.level));
+
+  weather.acc += weather.level * (quality.low ? 170 : 300) * dt;
+  while (weather.acc >= 1) {
+    weather.acc -= 1;
+    const r = poolSpawn(rainPool, cap('RAIN_MAX'));
+    if (!r) { weather.acc = 0; break; }
+    r.depth = 0.5 + Math.random() * 0.8;
+    r.x = -10 + Math.random() * (W + 30 + sim.speed * 0.8);
+    r.y = -Math.random() * 30;
+    r.vy = 170 + r.depth * 90;
+    r.gy = r.depth > 0.95 ? 158 + (r.depth - 0.95) * 60 : 112 + r.depth * 40;
+  }
+  for (let i = 0; i < rainPool.n; ) {
+    const r = rainPool.items[i];
+    r.vx = -(sim.speed * r.depth * 0.8) - 30 * r.depth;  // wind plus the train's own speed
+    r.x += r.vx * dt;
+    r.y += r.vy * dt;
+    if (r.y < r.gy && r.x > -12) { i++; continue; }
+    if (r.y >= r.gy && r.depth > 0.95 && r.x >= 0 && r.x < W) {
+      const s = poolSpawn(splashPool, cap('SPLASH_MAX'));
+      if (s) { s.x = Math.round(r.x); s.y = Math.round(r.gy); s.age = 0; s.water = isWater(s.x, s.y); }
+    }
+    poolKill(rainPool, i);
+  }
+  for (let i = 0; i < splashPool.n; ) {
+    const s = splashPool.items[i];
+    s.age += dt;
+    s.x -= sim.speed * PARALLAX.fg * dt;
+    if (s.age < (s.water ? 0.5 : 0.25)) i++;
+    else poolKill(splashPool, i);
+  }
+
+  // rare, distant lightning while it pours; thunder follows a moment later
+  if (weather.level > 0.5 && rng() < CONFIG.LIGHTNING_RATE * weather.level * dt) {
+    weather.flashT = 0;
+    let x = randInt(rng, 30, W - 30), y = randInt(rng, 6, 30);
+    weather.boltN = 0;
+    while (y < 108 && weather.boltN < 12) {
+      weather.bolt[weather.boltN * 2] = x; weather.bolt[weather.boltN * 2 + 1] = y; weather.boltN++;
+      x += randInt(rng, -5, 5); y += randInt(rng, 6, 12);
+    }
+    weather.thunderIn = 1 + rng() * 2;
+  }
+  weather.flashT += dt;
+  const ft = weather.flashT;                            // two quick pulses
+  weather.flash = ft > 0.6 ? 0 : Math.max(0, 1 - ft / 0.12) + (ft > 0.18 ? Math.max(0, 1 - (ft - 0.18) / 0.3) * 0.7 : 0);
+  if (weather.thunderIn > 0 && (weather.thunderIn -= dt) <= 0) playThunder(0.6 + weather.level * 0.4);
+}
+
+// Is this screen pixel open water in the near layer (river or a village pond)?
+function isWater(x, y) {
+  const u = sim.dist + (x - ANCHOR_X) / PARALLAX.fg, ly = y - LAYER_Y.fg;
+  if (sectionWeight('river', u) > 0.5) return ly >= 12 + Math.max(3, bankRows(u));
+  const D = TL.fg.data.village;
+  if (!D || !D.ponds) return false;
+  const lx = x + Math.floor(sim.dist * PARALLAX.fg);
+  for (let i = 0; i < D.ponds.length; i++) {
+    const pd = D.ponds[i];
+    if (Math.abs(lx - pd.cx) <= pd.rx) { const k = pondPixel(pd, lx, ly); return k !== null && k.charCodeAt(0) === 115; }   // 's'ky...
+  }
+  return false;
+}
+
+// Rain streak sprites by slant (0..8) and length (short far, long near)
+const RAIN_SPRITES = (() => {
+  const out = [];
+  for (let s = 0; s <= 8; s++)
+    for (const len of [4, 7]) {
+      const dx = Math.round(len * s / 8), [c, g] = makeCanvas(dx + 1, len);
+      for (let i = 0; i < len; i++) px(g, dx - Math.round(dx * i / (len - 1 || 1)), i, i === len - 1 ? PALETTE.white : PALETTE.cloudShade);
+      out.push(c);
+    }
+  return out;
+})();
+
+function drawRain(g) {
+  if (!rainPool.n && !splashPool.n) return;
+  g.globalAlpha = 0.75;
+  for (let i = 0; i < rainPool.n; i++) {
+    const r = rainPool.items[i], s = Math.min(8, Math.round(-r.vx / r.vy * 8)), spr = RAIN_SPRITES[s * 2 + (r.depth > 0.95 ? 1 : 0)];
+    g.drawImage(spr, Math.round(r.x), Math.round(r.y) - spr.height);
+  }
+  g.globalAlpha = 1;
+  for (let i = 0; i < splashPool.n; i++) {
+    const s = splashPool.items[i], x = Math.round(s.x), y = s.y;
+    if (s.water) {                                      // a ring spreading on the water
+      const rr = 1 + s.age * 9;
+      g.fillStyle = PALETTE.skyLight;
+      for (let a = 0; a < 8; a++) g.fillRect(Math.round(x + Math.cos(a * 0.785) * rr), Math.round(y + Math.sin(a * 0.785) * rr * 0.35), 1, 1);
+    } else {                                            // a little crown of droplets
+      g.fillStyle = PALETTE.cloudShade;
+      const k = s.age < 0.1 ? 1 : 2;
+      g.fillRect(x - k, y - k, 1, 1); g.fillRect(x + k, y - k, 1, 1);
+      if (k === 1) g.fillRect(x, y, 1, 1); else g.fillRect(x, y - 3, 1, 1);
+    }
+  }
 }
 
 function update(dt) {
@@ -2956,29 +3478,43 @@ function update(dt) {
   updatePeople(dt);
   updateUI(dt);
   sim.clock += dt;
-  sim.dayTime = (sim.dayTime + dt) % CONFIG.DAY_LENGTH;
   sim.cloudDrift += dt * 1.5;
   sim.wheelAngle = (sim.wheelAngle + sim.speed * dt / CONFIG.WHEEL_R) % (Math.PI / 2);
   sim.swayPhase += sim.speed * dt * 0.09;
+  sim.hornWave = Math.max(0, sim.hornWave - dt);
   updateSmoke(dt);
   updateBridge();
   updateBirds(dt);
   updateFluff(dt);
+  updateFireflies(dt);
+  updateSparks(dt);
+  updateWeather(dt);
+  trackSound(dt);
+  villageHorn(dt);
+}
+
+// Now and then the driver sounds the horn passing a village
+function villageHorn(dt) {
+  if (sim.state !== 'TRAVELING' || sectionWeight('village', sim.dist) < 0.5) return;
+  if ((sim.hornTimer -= dt) > 0) return;
+  sim.hornTimer = 12 + sim.fxRng() * 14;
+  playHorn(true);
 }
 
 // =====================================================================
 // 9. UI, SOUND AND INPUT
 // =====================================================================
 const canvas = document.getElementById('screen');
-const ui = { bannerY: -40, bannerSt: 1, complete: false, panelY: -110, hover: false, debugW: 0 };
-const input = { debug: true, fast: false };
+const ui = { bannerY: -40, bannerSt: 1, complete: false, panelY: -110, hover: false, debugW: 0,
+             paused: false, speed: 1, timeMode: 0, rainMode: 0 };     // toolbar state
+const input = { debug: false, fast: false };
 
 function updateUI(dt) {
   const next = sim.station + 1;
   const show = next <= LAST_STATION &&
     (sim.state === 'ARRIVING' || (sim.state === 'TRAVELING' && sim.nextStop - sim.dist < 900));
   if (show) ui.bannerSt = next;                           // latched while it slides out
-  ui.bannerY += ((show ? 3 : -40) - ui.bannerY) * Math.min(1, dt * 5);
+  ui.bannerY += ((show ? 19 : -40) - ui.bannerY) * Math.min(1, dt * 5);   // slides out under the route map
   ui.panelY += ((ui.complete ? 44 : -110) - ui.panelY) * Math.min(1, dt * 4);
 }
 
@@ -3062,11 +3598,12 @@ function drawDebug(g) {
     'DIST  ' + Math.floor(sim.dist) + ' PX',
     (stopped ? 'AT    ' : 'NEXT  ') + st.en,
     stopped ? 'PEOPLE ' + sim.people.length : 'IN    ' + Math.ceil(sim.nextStop - sim.dist) + ' PX',
-    'TIME  ' + phaseLabel(sim.dayTime),
+    'TIME  ' + hhmm(sim.hour) + ' ' + TIME_MODES[ui.timeMode][0] + (weather.level > 0.05 ? ' RAIN ' + Math.round(weather.level * 100) : ''),
     'LAND  ' + landLabel() + (sim.onBridge ? ' BRIDGE' : ''),
   ];
-  if (input.fast) lines.push('FAST FORWARD X' + CONFIG.FAST_FACTOR);
-  lines.push('D DEBUG  F FAST  T TIME', 'M SOUND ' + (audio.muted ? 'OFF' : 'ON') + '  R RESTART');
+  if (timeScale() !== 1) lines.push(ui.paused ? 'PAUSED' : 'SPEED X' + timeScale());
+  if (quality.low) lines.push('LOW QUALITY ' + quality.ema.toFixed(1) + ' MS');
+  lines.push('P PAUSE  N NEXT  T TIME  W RAIN', 'M SOUND  1/2/4 SPEED  R RESTART');
   const w = Math.max(...lines.map(textWidth)) + 6, h = lines.length * 7 + 4;
   rect(g, 2, 2, w, h, PALETTE.slate);
   rect(g, 3, 3, w - 2, h - 2, PALETTE.ink);
@@ -3075,67 +3612,286 @@ function drawDebug(g) {
   ui.debugW = w + 2;
 }
 
-// --- sound: synthesised diesel horn (browsers unlock audio on first input)
-const audio = { ctx: null, muted: false };
+// --- sound: everything synthesised with Web Audio, no files -----------------
+// The context is created on the first click / tap / key (browser rule).
+// Continuous beds (rumble, bridge ring, crowd, rain) are looping noise
+// through filters whose gains follow the scene; one-shots (rail joints,
+// horn, thunder) are scheduled ahead on the audio clock.
+const audio = { ctx: null, muted: false, master: null, noise: null, unlockedAt: 0, bedT: 0,
+                rumble: null, metal: null, boom: null, murmur: null, rain: null, patter: null };
+const JOINT_PX = 96;                                    // one rail length between joints
+const AXLES = [0, 8, 30, 38];                           // a carriage's two bogies: clickety ... clack
+const HORN_TONES = [311.1, 370.0];                      // E-flat and F-sharp: the two-tone chord of a diesel air horn
+const audioOn = () => audio.ctx && audio.ctx.state === 'running' && !audio.muted;
 
 function unlockAudio() {
   if (!audio.ctx) {
-    try { audio.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try { audio.ctx = new AC(); } catch (e) { return; }
+    audio.unlockedAt = performance.now();
+    buildAudioGraph();
   }
-  if (audio.ctx.state === 'suspended') audio.ctx.resume();
+  if (audio.ctx.state === 'suspended') audio.ctx.resume().then(syncButtons, syncButtons);
+  syncButtons();
 }
 
-// Three sawtooth voices (a minor-ish chord, like a twin-tone air horn)
-// through a low-pass filter, with a short pitch scoop at the start
-function playHorn() {
+function buildAudioGraph() {
   const ac = audio.ctx;
-  if (!ac || audio.muted || ac.state !== 'running') return;
-  const t0 = ac.currentTime, dur = 1.25;
-  const out = ac.createGain();
-  out.gain.setValueAtTime(0, t0);
-  out.gain.linearRampToValueAtTime(0.12, t0 + 0.06);
-  out.gain.setValueAtTime(0.12, t0 + dur - 0.2);
-  out.gain.linearRampToValueAtTime(0, t0 + dur);
-  const lp = ac.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.value = 1600;
-  lp.connect(out);
-  out.connect(ac.destination);
-  for (const f of [277.2, 349.2, 415.3]) {
-    const o = ac.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(f * 0.96, t0);
-    o.frequency.linearRampToValueAtTime(f, t0 + 0.1);
-    o.connect(lp);
-    o.start(t0);
-    o.stop(t0 + dur + 0.05);
-  }
+  audio.master = ac.createGain();
+  audio.master.gain.value = audio.muted ? 0 : 0.9;
+  audio.master.connect(ac.destination);
+  const len = ac.sampleRate * 2, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;      // 2 s of white noise, shared
+  audio.noise = buf;
+  const loop = () => { const s = ac.createBufferSource(); s.buffer = buf; s.loop = true; s.start(0, Math.random() * 2); return s; };
+  const filt = (type, f, q) => { const b = ac.createBiquadFilter(); b.type = type; b.frequency.value = f; if (q) b.Q.value = q; return b; };
+  const gain = v => { const n = ac.createGain(); n.gain.value = v; return n; };
+  const chain = nodes => { for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]); };
+  const lfo = (hz, depth, param) => { const o = ac.createOscillator(), gn = gain(depth); o.frequency.value = hz; o.connect(gn); gn.connect(param); o.start(); };
+  // wheels on rails: low rumble always, a ringing steel note and a hollow boom on the bridge
+  audio.rumble = gain(0); chain([loop(), filt('lowpass', 220), audio.rumble, audio.master]);
+  audio.metal = gain(0); chain([loop(), filt('bandpass', 2600, 7), audio.metal, audio.master]);
+  audio.boom = gain(0); chain([loop(), filt('bandpass', 110, 4), audio.boom, audio.master]);
+  // station crowd: two voice-band noises whose loudness wobbles like chatter
+  audio.murmur = gain(0);
+  const v1 = gain(0.55), v2 = gain(0.3);
+  chain([loop(), filt('bandpass', 420, 1.2), v1, audio.murmur]);
+  chain([loop(), filt('bandpass', 980, 2.2), v2, audio.murmur]);
+  lfo(0.9, 0.3, v1.gain); lfo(2.3, 0.15, v1.gain); lfo(1.7, 0.2, v2.gain);
+  chain([audio.murmur, filt('lowpass', 1600), audio.master]);
+  // rain: hiss plus a brighter patter
+  audio.rain = gain(0); chain([loop(), filt('highpass', 1200), filt('lowpass', 7500), audio.rain, audio.master]);
+  audio.patter = gain(0); chain([loop(), filt('bandpass', 3800, 1.5), audio.patter, audio.master]);
 }
 
-// --- input --------------------------------------------------------------
+function setMuted(m) {
+  audio.muted = m;
+  if (audio.master) audio.master.gain.setTargetAtTime(m ? 0 : 0.9, audio.ctx.currentTime, 0.05);
+  syncButtons();
+}
+
+// Ten times a second, steer the continuous beds towards the scene
+function updateAudioBeds(dt) {
+  if (!audio.ctx || audio.ctx.state !== 'running' || (audio.bedT += dt) < 0.1) return;
+  audio.bedT = 0;
+  const now = audio.ctx.currentTime, run = ui.paused ? 0 : 1, sp = Math.min(1, sim.speed / CONFIG.CRUISE_SPEED) * run;
+  const st = STATIONS[sim.state === 'STOPPED' ? sim.station : Math.min(LAST_STATION, sim.station + 1)];
+  const near = Math.max(0, 1 - Math.abs(st.dist - sim.dist) / 500) * Math.min(1, sim.people.length / 8) * run;
+  const set = (node, v) => node.gain.setTargetAtTime(v, now, 0.15);
+  set(audio.rumble, sp * (0.16 + 0.12 * sim.bridgeMix));
+  set(audio.metal, sp * sim.bridgeMix * 0.05);
+  set(audio.boom, sp * sim.bridgeMix * 0.35);
+  set(audio.murmur, near * 0.09);
+  set(audio.rain, weather.level * 0.16 * run);
+  set(audio.patter, weather.level * 0.05 * run);
+}
+
+// Rail joints: every JOINT_PX of travel, the four axles of a carriage click
+// over it in turn - so the rhythm follows the speed exactly
+function trackSound(dt) {
+  sim.jointAcc += sim.speed * dt;
+  if (sim.jointAcc < JOINT_PX) return;
+  sim.jointAcc -= JOINT_PX;
+  if (!audioOn() || sim.speed < 3) return;
+  const now = audio.ctx.currentTime, rate = sim.speed * timeScale();
+  for (let i = 0; i < AXLES.length; i++) playClick(now + 0.02 + AXLES[i] / rate, i === 0 || i === 2);
+}
+
+function playClick(t, strong) {
+  const ac = audio.ctx, metal = sim.bridgeMix > 0.3, peak = (strong ? 0.32 : 0.22) * (1 + sim.bridgeMix * 0.7);
+  const src = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = audio.noise;
+  bp.type = 'bandpass'; bp.frequency.value = metal ? 3200 : 1700; bp.Q.value = metal ? 9 : 1.6;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(peak, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + (metal ? 0.14 : 0.06));
+  src.connect(bp); bp.connect(g); g.connect(audio.master);
+  src.start(t, Math.random() * 1.8, 0.16);
+  const o = ac.createOscillator(), og = ac.createGain();               // the thump under the click
+  o.frequency.setValueAtTime(95, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.07);
+  og.gain.setValueAtTime(peak * 0.9, t);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+  o.connect(og); og.connect(audio.master);
+  o.start(t); o.stop(t + 0.1);
+}
+
+// Two-tone chord, three detuned saws per tone, a brassy peak and vibrato.
+// Long blast on departure; two short toots passing villages.
+function playHorn(short) {
+  sim.hornWave = short ? 1 : 1.6;
+  if (!audioOn()) return;
+  const t0 = audio.ctx.currentTime + 0.02;
+  if (short) { hornBlast(t0, 0.3); hornBlast(t0 + 0.42, 0.5); }
+  else hornBlast(t0, 1.3);
+}
+
+function hornBlast(t0, dur) {
+  const ac = audio.ctx, out = ac.createGain(), lp = ac.createBiquadFilter(), pk = ac.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 2400;
+  pk.type = 'peaking'; pk.frequency.value = 900; pk.gain.value = 6;
+  out.gain.setValueAtTime(0, t0);
+  out.gain.linearRampToValueAtTime(0.09, t0 + 0.07);
+  out.gain.setValueAtTime(0.09, t0 + dur - 0.15);
+  out.gain.linearRampToValueAtTime(0, t0 + dur);
+  lp.connect(pk); pk.connect(out); out.connect(audio.master);
+  const vib = ac.createOscillator(), vg = ac.createGain();
+  vib.frequency.value = 5.5; vg.gain.value = 2.5; vib.connect(vg);
+  for (const f of HORN_TONES)
+    for (const det of [-7, 0, 6]) {
+      const o = ac.createOscillator();
+      o.type = 'sawtooth';
+      o.detune.value = det;
+      o.frequency.setValueAtTime(f * 0.94, t0);
+      o.frequency.exponentialRampToValueAtTime(f, t0 + 0.09);
+      vg.connect(o.frequency);
+      o.connect(lp);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+  vib.start(t0); vib.stop(t0 + dur + 0.05);
+}
+
+function playThunder(strength) {
+  if (!audioOn()) return;
+  const ac = audio.ctx, t = ac.currentTime, src = ac.createBufferSource(), lp = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = audio.noise; src.loop = true;
+  lp.type = 'lowpass'; lp.frequency.setValueAtTime(380, t); lp.frequency.exponentialRampToValueAtTime(90, t + 2.5);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5 * strength, t + 0.25);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+  src.connect(lp); lp.connect(g); g.connect(audio.master);
+  src.start(t, Math.random()); src.stop(t + 3.3);
+}
+
+// --- route map: the whole line, coloured by landscape, with a little train -
+const MAP = { x: 0, y: 2, w: 150, sprite: null };
+function buildMap() {
+  const w = MAP.w, h = 15, [c, g] = makeCanvas(w + 12, h);
+  const d0 = STATIONS[0].dist, d1 = STATIONS[LAST_STATION].dist;
+  const SEC_COL = { village: PALETTE.grass, river: PALETTE.skyMid, kash: PALETTE.cream, tea: PALETTE.green, hills: PALETTE.haze };
+  rect(g, 0, 0, w + 12, 9, PALETTE.slate);
+  rect(g, 1, 1, w + 10, 7, PALETTE.ink);
+  for (let i = 0; i <= w; i++) {
+    const tw = terrainAt(d0 + (d1 - d0) * i / w);
+    rect(g, 6 + i, 4, 1, 1, SEC_COL[TERRAIN[bayer(i, 4) < tw.t * 16 ? tw.b : tw.a].id]);
+  }
+  for (const st of STATIONS) {
+    const x = 6 + Math.round((st.dist - d0) / (d1 - d0) * w);
+    rect(g, x - 1, 3, 3, 3, PALETTE.white);
+    drawText(g, st.code || st.en.slice(0, 3), Math.max(0, Math.min(w + 12 - 11, x - 5)), 10, PALETTE.grayLight);
+  }
+  MAP.x = (W - w - 12) >> 1;
+  MAP.sprite = c;
+}
+
+function drawMap(g) {
+  if (!MAP.sprite) buildMap();
+  const d0 = STATIONS[0].dist, d1 = STATIONS[LAST_STATION].dist, ox = MAP.x + 6, oy = MAP.y;
+  g.drawImage(MAP.sprite, MAP.x, oy);
+  for (let i = 0; i <= LAST_STATION; i++) {              // stations reached glow, the next one blinks
+    const x = ox + Math.round((STATIONS[i].dist - d0) / (d1 - d0) * MAP.w);
+    const next = i === sim.station + (sim.state === 'STOPPED' ? 0 : 1);
+    if (i <= sim.station || (next && Math.floor(sim.clock * 3) & 1)) { g.fillStyle = PALETTE.glow; g.fillRect(x, oy + 4, 1, 1); }
+  }
+  const tx = ox + Math.round((sim.dist - d0) / (d1 - d0) * MAP.w);
+  g.fillStyle = PALETTE.green; g.fillRect(tx - 5, oy + 2, 3, 2);       // carriage
+  g.fillStyle = PALETTE.blue;  g.fillRect(tx - 1, oy + 1, 3, 3);       // locomotive
+  g.fillStyle = PALETTE.glow;  g.fillRect(tx + 2, oy + 2, 1, 1);       // headlight
+}
+
+// --- controls: toolbar buttons and keys --------------------------------------
+const SPEEDS = [1, 2, 4], RAIN_MODES = ['AUTO', 'ON', 'OFF'];
+const ICONS = {
+  pause: '<path d="M4 3h3v10H4zM9 3h3v10H9z"/>',
+  play: '<path d="M4 3h2v1h2v1h2v1h2v1h1v2h-1v1h-2v1H8v1H6v1H4z"/>',
+  sun: '<path d="M6 5h4v1h1v4h-1v1H6v-1H5V6h1zM7 1h2v2H7zM7 13h2v2H7zM1 7h2v2H1zM13 7h2v2h-2zM3 3h2v2H3zM11 3h2v2h-2zM3 11h2v2H3zM11 11h2v2h-2z"/>',
+  dusk: '<path d="M5 7h6v1h1v2H4V8h1zM1 11h14v1H1zM3 13h10v1H3zM7 2h2v3H7zM2 5h2v2H2zM12 5h2v2h-2z"/>',
+  moon: '<path d="M7 2h4v1H8v1H7v1H6v6h1v1h1v1h3v1H7v-1H5v-1H4V9H3V6h1V4h1V3h2z"/>',
+  auto: '<path d="M6 2h4v1h2v1h1v2h1v4h-1v2h-1v1h-2v1H6v-1H4v-1H3v-2H2V6h1V4h1V3h2zM7 4v5h4V8H8V4z"/>',
+  sound: '<path d="M2 6h3l3-3h1v10H8l-3-3H2zM11 5h1v6h-1zM13 3h1v10h-1z"/>',
+  mute: '<path d="M2 6h3l3-3h1v10H8l-3-3H2zM11 5h1v1h-1zM12 6h1v1h-1zM13 7h1v1h-1zM14 8h1v1h-1zM14 5h1v1h-1zM13 6h1v1h-1zM12 7h1v1h-1zM11 8h1v1h-1z"/>',
+};
+const btn = id => document.getElementById(id);
+
+function syncButtons() {
+  const set = (id, icon, label, on, aria) => {
+    const b = btn(id);
+    if (icon && b.dataset.icon !== icon) { b.firstElementChild.innerHTML = icon; b.dataset.icon = icon; }
+    if (label !== null && b.lastChild.textContent !== label) b.lastChild.textContent = label;
+    b.classList.toggle('on', !!on);
+    b.setAttribute('aria-label', aria);
+  };
+  set('b-pause', ui.paused ? ICONS.play : ICONS.pause, ui.paused ? 'PLAY' : 'PAUSE', ui.paused, ui.paused ? 'Resume' : 'Pause');
+  const sp = btn('b-speed');
+  if (sp.textContent !== ui.speed + 'x') sp.textContent = ui.speed + 'x';
+  sp.classList.toggle('on', ui.speed > 1);
+  sp.setAttribute('aria-label', 'Speed ' + ui.speed + 'x');
+  const tm = TIME_MODES[ui.timeMode][0];
+  set('b-time', tm === 'NIGHT' ? ICONS.moon : tm === 'DUSK' ? ICONS.dusk : tm === 'DAY' ? ICONS.sun : ICONS.auto, tm, ui.timeMode > 0, 'Time of day: ' + tm);
+  set('b-rain', null, RAIN_MODES[ui.rainMode], ui.rainMode === 1, 'Rain: ' + RAIN_MODES[ui.rainMode]);
+  const live = audio.ctx && audio.ctx.state === 'running';
+  set('b-mute', live && !audio.muted ? ICONS.sound : ICONS.mute, !live ? 'TAP' : audio.muted ? 'OFF' : 'ON', live && !audio.muted,
+      !live ? 'Turn sound on' : audio.muted ? 'Unmute' : 'Mute');
+}
+
+const actions = {
+  pause() { ui.paused = !ui.paused; },
+  speed() { ui.speed = SPEEDS[(SPEEDS.indexOf(ui.speed) + 1) % SPEEDS.length]; },
+  skip() { skipToNextStation(); },
+  time() { ui.timeMode = (ui.timeMode + 1) % TIME_MODES.length; },
+  rain() { ui.rainMode = (ui.rainMode + 1) % RAIN_MODES.length; },
+  mute() {
+    // the tap that starts the audio should not also mute it
+    if (performance.now() - audio.unlockedAt < 700) { setMuted(false); return; }
+    setMuted(!audio.muted);
+  },
+};
+for (const [id, act] of [['b-pause', 'pause'], ['b-speed', 'speed'], ['b-skip', 'skip'], ['b-time', 'time'], ['b-rain', 'rain'], ['b-mute', 'mute']])
+  btn(id).addEventListener('click', () => { unlockAudio(); actions[act](); syncButtons(); });
+
+function skipToNextStation() {
+  if (ui.complete || sim.station >= LAST_STATION) return;
+  sim.station++;
+  sim.dist = STATIONS[sim.station].dist;
+  sim.doorOpen = 0;
+  smokePool.n = sparkPool.n = 0;
+  setState('STOPPED');
+}
+
+const timeScale = () => (ui.paused ? 0 : ui.speed) * (input.fast ? CONFIG.FAST_FACTOR : 1);
+
 addEventListener('keydown', e => {
   unlockAudio();
   if (e.code === 'KeyF') input.fast = true;
   if (e.repeat) return;
-  if (e.code === 'KeyD') input.debug = !input.debug;
-  if (e.code === 'KeyT') skipTimeOfDay();
-  if (e.code === 'KeyM') audio.muted = !audio.muted;
-  if (e.code === 'KeyR' || (ui.complete && (e.code === 'Enter' || e.code === 'Space'))) startJourney();
+  const key = e.code;
+  if (key === 'KeyD') input.debug = !input.debug;
+  else if (key === 'KeyT') actions.time();
+  else if (key === 'KeyM') setMuted(!audio.muted);
+  else if (key === 'KeyW') actions.rain();
+  else if (key === 'KeyN') actions.skip();
+  else if (key === 'KeyP' || (key === 'Space' && !ui.complete)) { actions.pause(); e.preventDefault(); }
+  else if (key === 'Digit1' || key === 'Digit2' || key === 'Digit4') ui.speed = +key.slice(5);
+  else if (key === 'KeyR' || (ui.complete && (key === 'Enter' || key === 'Space'))) startJourney();
+  syncButtons();
 });
 addEventListener('keyup', e => { if (e.code === 'KeyF') input.fast = false; });
 addEventListener('blur', () => { input.fast = false; });
+addEventListener('pointerdown', unlockAudio);
 
 function toInternal(e) {
   const r = canvas.getBoundingClientRect();
   return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
 }
 canvas.addEventListener('pointermove', e => {
-  ui.hover = buttonHit(...toInternal(e));
+  const [x, y] = toInternal(e);
+  ui.hover = buttonHit(x, y);
   canvas.style.cursor = ui.hover ? 'pointer' : 'default';
 });
 canvas.addEventListener('pointerdown', e => {
-  unlockAudio();
-  if (buttonHit(...toInternal(e))) { startJourney(); ui.hover = false; canvas.style.cursor = 'default'; }
+  const [x, y] = toInternal(e);
+  if (buttonHit(x, y)) { startJourney(); ui.hover = false; canvas.style.cursor = 'default'; }
 });
 
 // =====================================================================
@@ -3159,13 +3915,12 @@ for (let level = 0; level <= 16; level++) {
 buildTerrain();
 const VARIANTS = { day: buildVariant('day'), dusk: buildVariant('dusk'), night: buildVariant('night') };
 
-function renderScene(g, v) {
-  const d = sim.dist, here = terrainAt(d);
-  const skyA = v.sky[SECTIONS[TERRAIN[here.a].id].sky], skyB = v.sky[SECTIONS[TERRAIN[here.b].id].sky];
-  g.drawImage(skyA, 0, 0);                                                // 1. sky (per section mood)
-  if (skyB !== skyA) overlay(g, here.t, s => s.drawImage(skyB, 0, 0));
-  drawTiled(g, v.clouds, d * PARALLAX.clouds + sim.cloudDrift, LAYER_Y.clouds); // 2. clouds
-  overlay(g, sectionWeight('kash', d), s => drawTiled(s, v.cumulus, d * 0.07 + sim.cloudDrift * 1.4, 2));
+// Everything that belongs to the landscape and lighting variant v. The sky
+// is drawn once beforehand; this is drawn twice while two lightings blend.
+function renderWorld(g, v) {
+  const d = sim.dist;
+  drawTiled(g, v.clouds, d * PARALLAX.clouds + sim.cloudDrift, LAYER_Y.clouds);   // 2. clouds
+  drawCumulus(g, v, sectionWeight('kash', d));
   drawBackdrops(g, v, 'far');                                             //    Dhaka skyline
   drawTerrain(g, v, TL.far);                                              // 3. distant land
   drawTerrain(g, v, TL.mid);                                              // 4. fields, river, hills
@@ -3180,49 +3935,117 @@ function renderScene(g, v) {
 }
 
 function render() {
-  const { a, b, f } = lightingAt(sim.dayTime);
-  const level = Math.round(f * 16);
-  renderScene(ctx, VARIANTS[level >= 16 ? b : a]);
+  updateSky(ctx);
+  placeCelestial();
+  ctx.setTransform(1, 0, 0, 1, shake.x, shake.y);
+  ctx.fillStyle = sky.pattern;                                           // 1. sky, sun, moon, stars
+  ctx.fillRect(-2, -2, W + 4, H + 4);
+  drawCelestial(ctx);
+  const { a, b, f } = lightingAt(sim.hour), level = Math.round(f * 16);
+  lights.n = 0;
+  lights.collect = true;
+  renderWorld(ctx, VARIANTS[level >= 16 ? b : a]);
+  lights.collect = false;
   if (level > 0 && level < 16) {
     // keep lighting B only on pixels of the Bayer mask, then lay it over A
-    renderScene(bctx, VARIANTS[b]);
+    bctx.setTransform(1, 0, 0, 1, shake.x, shake.y);
+    bctx.clearRect(-2, -2, W + 4, H + 4);
+    renderWorld(bctx, VARIANTS[b]);
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
     bctx.globalCompositeOperation = 'destination-in';
     bctx.fillStyle = DITHER_MASKS[level];
     bctx.fillRect(0, 0, W, H);
     bctx.globalCompositeOperation = 'source-over';
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(bufB, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, shake.x, shake.y);
   }
+  drawRain(ctx);
+  applyTint(ctx);                                                        // 7. time-of-day colour
+  drawGlow(ctx);                                                         // 8. lamps, windows, sparks
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ui.debugW = 0;
   if (input.debug) drawDebug(ctx);
+  drawMap(ctx);
   drawBanner(ctx);
   drawPanel(ctx);
 }
 
-// --- scale to the window, keeping 16:9 --------------------------------
+// Paint terrain chunks (and the sprites standing on them) a little before
+// they scroll into view, at most one per frame, for every lighting that
+// is on screen or about to be - so nothing is built mid-frame on demand
+const PREFETCH_WANT = ['', '', '', ''];
+function prefetchTerrain() {
+  const now = lightingAt(sim.hour), na = now.a, nb = now.b;
+  const soon = lightingAt((sim.hour + 0.6) % 24), sa = soon.a, sb = soon.b;
+  const want = PREFETCH_WANT;
+  want[0] = na; want[1] = nb; want[2] = sa; want[3] = sb;
+  for (let w = 0; w < 4; w++) {
+    if (want.indexOf(want[w]) !== w) continue;
+    const v = VARIANTS[want[w]];
+    for (const L of TLAYERS) {
+      const cam = Math.floor(sim.dist * L.f), k0 = Math.floor(cam / CHUNK_W), k1 = Math.floor((cam + W - 1) / CHUNK_W) + 1;
+      for (let k = k0; k <= k1; k++) if (!v.chunks[L.key].has(k)) { terrainChunk(v, L, k); warmChunk(v, L, k); return; }
+    }
+  }
+}
+
+// Paint every sprite of the live entities standing on a chunk
+function warmChunk(v, L, k) {
+  const x0 = k * CHUNK_W, x1 = x0 + CHUNK_W, live = L.live;
+  let lo = 0, hi = live.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (live[m].x0 < x0 - L.span) lo = m + 1; else hi = m; }
+  for (let i = lo; i < live.length && live[i].x0 < x1; i++) if (live[i].warm && live[i].x1 >= x0) live[i].warm(v);
+}
+
+// --- layout: canvas and toolbar share the screen --------------------------
+// Portrait: toolbar under the picture. Wide screens: toolbar beside it.
+// If neither leaves room, the toolbar floats over the bottom of the picture.
+const bar = document.getElementById('bar');
 function fit() {
-  const s = Math.min(innerWidth / W, innerHeight / H);
+  const cs = getComputedStyle(document.body);
+  const aw = innerWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const ah = innerHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const B = 48, GAP = 8, n = bar.children.length, along = n * B + (n - 1) * 6;
+  const below = along <= aw ? Math.min(aw / W, (ah - B - GAP) / H) : 0;
+  const side = along <= ah ? Math.min((aw - B - GAP) / W, ah / H) : 0;
+  const over = Math.min(aw / W, ah / H);
+  let mode = side >= below ? 'side' : 'below', s = Math.max(side, below);
+  if (s < over * 0.8) { mode = 'overlay'; s = over; }
+  document.body.className = mode;
   canvas.style.width = Math.floor(W * s) + 'px';
   canvas.style.height = Math.floor(H * s) + 'px';
 }
 addEventListener('resize', fit);
+addEventListener('orientationchange', () => setTimeout(fit, 100));
 fit();
 
 // --- fixed-timestep loop ----------------------------------------------
-let acc = 0, last = 0;
+let acc = 0, last = 0, frames = 0;
 function frame(now) {
-  const dt = Math.min(CONFIG.MAX_FRAME, (now - last) / 1000);
+  const dt = Math.min(CONFIG.MAX_FRAME, (now - last) / 1000), t0 = performance.now();
   last = now;
-  acc += dt * (input.fast ? CONFIG.FAST_FACTOR : 1);
+  acc += dt * timeScale();
   let steps = 0;
   while (acc >= CONFIG.STEP && steps < 120) {
     update(CONFIG.STEP);
     acc -= CONFIG.STEP;
     steps++;
   }
+  if (!steps && ui.paused) acc = 0;
+  updateHour(dt);                                       // also eases while paused (time button)
+  updateShake(steps ? dt : 0);
+  updateAudioBeds(dt);
   render();
+  prefetchTerrain();
+  // phones and slow machines: drop to the light particle budgets
+  const cost = performance.now() - t0;
+  quality.ema = quality.ema * 0.95 + cost * 0.05;
+  if (!quality.low && ++frames > 180 && quality.ema > CONFIG.LOW_QUALITY_MS) quality.low = true;
   requestAnimationFrame(frame);
 }
 startJourney();
+syncButtons();
 requestAnimationFrame(now => { last = now; render(); requestAnimationFrame(frame); });
 </script>
 </body>
