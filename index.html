@@ -43,16 +43,24 @@
   #bar button.big { font-size: 15px; }
   #bar svg { width: 20px; height: 20px; shape-rendering: crispEdges; fill: currentColor; }
   #bar button > * { pointer-events: none; }       /* taps always land on the button itself */
+  #bar button[hidden] { display: none; }          /* AUTO and DRIVE show different controls */
 </style>
 </head>
 <body>
 <canvas id="screen" width="320" height="180"></canvas>
 <div id="bar" role="toolbar" aria-label="Train controls">
+  <button id="b-mode" type="button" aria-label="Driver mode" title="Drive the train yourself (C)"><svg viewBox="0 0 16 16"><path d="M5 2h6v1h2v2h1v6h-1v2h-2v1H5v-1H3v-2H2V5h1V3h2zM6 4H5v1H4v6h1v1h6v-1h1V5h-1V4zM7 4h2v3H7zM7 7h2v2H7zM4 7h3v1H4zM9 7h3v1H9zM7 9h2v3H7z"/></svg><span>AUTO</span></button>
+  <button id="b-engine" type="button" class="drv" hidden aria-label="Start the engine" title="Engine start / stop (E)"><svg viewBox="0 0 16 16"><path d="M7 1h2v7H7zM4 3h2v2H4zM10 3h2v2h-2zM2 5h2v6H2zM12 5h2v6h-2zM3 11h2v2H3zM11 11h2v2h-2zM5 13h6v1H5z"/></svg><span>START</span></button>
+  <button id="b-power" type="button" class="drv" hidden aria-label="Power: notch up" title="Power up / release brake (Up arrow)"><svg viewBox="0 0 16 16"><path d="M7 3h2v1h1v1h1v1h1v1h1v1h1v2H2V8h1V7h1V6h1V5h1V4h1z"/></svg><span>POWER</span></button>
+  <button id="b-brake" type="button" class="drv" hidden aria-label="Brake: notch down" title="Power down / brake (Down arrow, B = emergency)"><svg viewBox="0 0 16 16"><path d="M2 5h12v2h-1v1h-1v1h-1v1h-1v1H9v1H7v-1H6v-1H5V9H4V8H3V7H2z"/></svg><span>BRAKE</span></button>
+  <button id="b-doors" type="button" class="drv" hidden aria-label="Open the doors" title="Doors (O)"><svg viewBox="0 0 16 16"><path d="M2 2h12v12H2zM4 4v10h3V4zM9 4v10h3V4z"/></svg><span>OPEN</span></button>
+  <button id="b-horn" type="button" class="drv" hidden aria-label="Horn" title="Horn (hold H)"><svg viewBox="0 0 16 16"><path d="M1 7h3v2H1zM4 6h2v4H4zM6 5h2v6H6zM8 3h2v10H8zM12 4h1v1h-1zM13 7h2v2h-2zM12 11h1v1h-1z"/></svg><span>HORN</span></button>
+  <button id="b-light" type="button" class="drv" hidden aria-label="Headlight" title="Headlight (L)"><svg viewBox="0 0 16 16"><path d="M6 2h4v1h1v1h1v4h-1v1h-1v2H6V9H5V8H4V4h1V3h1zM6 12h4v1H6zM7 14h2v1H7z"/></svg><span>LIGHT</span></button>
   <button id="b-pause" type="button" aria-label="Pause" title="Pause (P)"><svg viewBox="0 0 16 16"></svg><span>PAUSE</span></button>
-  <button id="b-speed" type="button" class="big" aria-label="Speed 1x" title="Speed (1 / 2 / 4)">1x</button>
-  <button id="b-skip" type="button" aria-label="Skip to next station" title="Next station (N)"><svg viewBox="0 0 16 16"><path d="M3 3h2v1h2v1h2v1h1v1h1v2h-1v1h-1v1H7v1H5v1H3zM12 3h2v10h-2z"/></svg><span>NEXT</span></button>
-  <button id="b-time" type="button" aria-label="Time of day" title="Time of day (T)"><svg viewBox="0 0 16 16"></svg><span>AUTO</span></button>
-  <button id="b-rain" type="button" aria-label="Rain" title="Rain (W)"><svg viewBox="0 0 16 16"><path d="M5 2h5v1h2v1h1v2h1v3H1V6h1V4h1V3h2zM3 11h1v2H3zM7 11h1v2H7zM11 11h1v2h-1zM5 13h1v2H5zM9 13h1v2H9z"/></svg><span>AUTO</span></button>
+  <button id="b-speed" type="button" class="big aut" aria-label="Speed 1x" title="Speed (1 / 2 / 4)">1x</button>
+  <button id="b-skip" type="button" class="aut" aria-label="Skip to next station" title="Next station (N)"><svg viewBox="0 0 16 16"><path d="M3 3h2v1h2v1h2v1h1v1h1v2h-1v1h-1v1H7v1H5v1H3zM12 3h2v10h-2z"/></svg><span>NEXT</span></button>
+  <button id="b-time" type="button" class="aut" aria-label="Time of day" title="Time of day (T)"><svg viewBox="0 0 16 16"></svg><span>AUTO</span></button>
+  <button id="b-rain" type="button" class="aut" aria-label="Rain" title="Rain (W)"><svg viewBox="0 0 16 16"><path d="M5 2h5v1h2v1h1v2h1v3H1V6h1V4h1V3h2zM3 11h1v2H3zM7 11h1v2H7zM11 11h1v2h-1zM5 13h1v2H5zM9 13h1v2H9z"/></svg><span>AUTO</span></button>
   <button id="b-mute" type="button" aria-label="Sound" title="Sound (M)"><svg viewBox="0 0 16 16"></svg><span>TAP</span></button>
 </div>
 <script>
@@ -80,6 +88,21 @@ const CONFIG = {
   BOARD_TIMEOUT: 18,                    // safety cap on the boarding phase
   FLAG_TIME: 2.2,                       // guard waves the green flag
   HORN_TIME: 1.6,                       // horn, then depart
+
+  // DRIVE mode: the player drives with one combined lever, -5 (emergency
+  // brake) .. -1 brake steps, 0 coast, 1 .. 8 power notches
+  DRIVE: {
+    NOTCHES: 8, BRAKES: 4,
+    ACCEL: 15, KNEE: 45,                // px/s² at full power; tractive effort fades above KNEE px/s
+    DRAG: [0.5, 0.00035],               // rolling + air resistance: c0 + c1 * v²
+    BRAKE: 4.5, EMERGENCY: 28,          // px/s² per brake step, emergency brake
+    CRANK_TIME: 2.2, SHUTDOWN_TIME: 2.5,
+    LIMIT: 100, LIMIT_HILLS: 80, LIMIT_BRIDGE: 60, LIMIT_STATION: 60,   // km/h (= px/s)
+    COMFORT_ACCEL: 16,                  // px/s² passengers put up with
+    FIRST_DEP: 32, DWELL: 16, SLACK: 6, // timetable: s to first departure, per stop, per leg
+    SCHED_SPEED: 84,                    // px/s the timetable assumes on open line
+    ON_TIME: 8,                         // game minutes either side that count as on time
+  },
 
   // time of day follows the trip: early morning at Kamalapur, night at Sylhet
   HOUR_START: 5.6, HOUR_END: 20.4,
@@ -112,7 +135,7 @@ const CONFIG = {
 //   idle      extra people standing around
 //   backdrop  extra scenery from BACKDROPS drawn near the station (the
 //             landscape along the line itself comes from TERRAIN below)
-//   extras    station-specific props / characters ('porter', 'fish')
+//   extras    station-specific props / characters ('porter', 'fish', 'chests')
 const ROUTE = [
   { en: 'KAMALAPUR', bn: 'কমলাপুর', code: 'DHK', km: 0,
     platform: [-330, 650], roof: 'umbrella', crowd: 15, alight: 0, idle: 14,
@@ -122,6 +145,9 @@ const ROUTE = [
     extras: ['fish'] },
   { en: 'SRIMANGAL', bn: 'শ্রীমঙ্গল', code: 'SMG', km: 234,
     platform: [4, 318], roof: 'shelter', crowd: 2, alight: 2, idle: 1 },
+  { en: 'KULAURA JN.', bn: 'কুলাউড়া জংশন', code: 'KUL', km: 272,
+    roof: 'canopy', roofColor: 'blue', crowd: 5, alight: 3, idle: 3,
+    extras: ['chests'] },                                  // tea chests from the gardens around
   { en: 'SYLHET', bn: 'সিলেট', code: 'SYL', km: 319,
     platform: [-60, 380], roof: 'canopy', crowd: 0, alight: 12, idle: 2 },
 ];
@@ -136,8 +162,8 @@ const TERRAIN = [
   { id: 'village' },                      // Kamalapur onwards: paddy, ponds, tin roofs
   { id: 'river', at: [1, -260] },         // the Meghna at Bhairab, and the bridge
   { id: 'kash',  at: [1, 1640] },         // sandy chars white with kash phool
-  { id: 'tea',   at: [2, -420] },         // Srimangal tea gardens
-  { id: 'hills', at: [2, 720] },          // misty hills on the approach to Sylhet
+  { id: 'tea',   at: [2, -420] },         // Srimangal and Kulaura tea gardens
+  { id: 'hills', at: [3, 200] },          // misty hills on the approach to Sylhet
 ];
 // Steel truss railway bridge over the Meghna, just past Bhairab Bazar
 const BRIDGE = { at: [1, 600], spans: 6, span: 120 };
@@ -299,6 +325,10 @@ function hexToRgb(hex) {
 const FONT = {
   ' ': '000 000 000 000 000', '.': '000 000 000 000 010', ':': '000 010 000 010 000',
   '-': '000 000 111 000 000', '/': '001 001 010 100 100', '>': '100 010 001 010 100',
+  '!': '010 010 010 000 010', '+': '000 010 111 010 000', '%': '101 001 010 100 101',
+  '[': '110 100 100 100 110', ']': '011 001 001 001 011',
+  '↑': '010 111 010 010 010', '↓': '010 010 010 111 010',
+  '←': '010 100 111 100 010', '→': '010 001 111 001 010',
   '0': '111 101 101 101 111', '1': '010 110 010 010 111', '2': '111 001 111 100 111',
   '3': '111 001 011 001 111', '4': '101 101 111 001 001', '5': '111 100 111 001 111',
   '6': '111 100 111 101 111', '7': '111 001 010 010 010', '8': '111 101 111 101 111',
@@ -608,11 +638,18 @@ function emitPuff(heavy) {
 }
 
 function updateSmoke(dt) {
-  const st = sim.state;
-  // idling engine puffs gently; it revs up (darker smoke) for the horn and departure
-  const revving = st === 'DEPARTING' || sim.stopPhase === 'HORN';
-  const rate = revving ? 12 : st === 'TRAVELING' ? 5 : st === 'ARRIVING' ? 3
-             : sim.stopPhase === 'TERMINUS' ? 0.8 : 1.5;
+  const st = sim.state, e = drive.engine;
+  // idling engine puffs gently; it revs up (darker smoke) for the horn and departure.
+  // A cold engine makes none; the driver's notch sets the rate in DRIVE mode.
+  let rate = 0, revving = false;
+  if (e === 'CRANK') rate = 2.5;
+  else if (e === 'SHUTDOWN') rate = 0.6;
+  else if (e === 'ON' && drive.on) { rate = 1.5 + Math.max(0, drive.rpm - 0.3) * 16; revving = drive.rpm > 0.72; }
+  else if (e === 'ON') {
+    revving = st === 'DEPARTING' || sim.stopPhase === 'HORN';
+    rate = revving ? 12 : st === 'TRAVELING' ? 5 : st === 'ARRIVING' ? 3
+         : sim.stopPhase === 'TERMINUS' ? 0.8 : 1.5;
+  }
   sim.smokeAcc += rate * dt;
   while (sim.smokeAcc >= 1) { sim.smokeAcc -= 1; emitPuff(revving); }
   const windX = -(sim.speed + 4), kx = Math.min(1, dt * 2.2), ky = Math.min(1, dt * 1.5);
@@ -2238,6 +2275,9 @@ function layoutStation(st) {
   if (st.extras.includes('fish'))
     for (const [x, y] of [[228, 160], [236, 165], [246, 161], [-40, 161], [-30, 166], [346, 162], [356, 167]])
       if (clear(x)) items.push({ type: 'basket', key: 'basket' + randInt(rng, 0, 2), x, y });
+  if (st.extras.includes('chests'))
+    for (const [x, y] of [[212, 159], [-16, 162], [-6, 166]])
+      if (clear(x)) items.push({ type: 'chests', x, y });
   return items;
 }
 
@@ -2293,6 +2333,17 @@ function buildProps(p, lit) {
     }),
     stall: prop(27, 26, 0, 25, g => paintStall(g, p, lit)),
     basket0: fishBasket(p, 0), basket1: fishBasket(p, 1), basket2: fishBasket(p, 2),
+    // plywood tea chests, banded and stencilled, waiting for the goods train
+    chests: prop(11, 10, 5, 9, g => {
+      for (const [x, y, w] of [[0, 5, 11], [2, 0, 7]]) {
+        rect(g, x, y, w, 5, p.tan);
+        rect(g, x, y, w, 1, p.cream);
+        rect(g, x + w - 1, y, 1, 5, p.brown);
+        rect(g, x, y + 2, w - 1, 1, p.brown);                 // metal band
+        px(g, x + 2, y + 3, p.brownDark); px(g, x + 3, y + 3, p.brownDark);   // stencil
+      }
+      rect(g, 0, 9, 11, 1, p.brownDark);
+    }),
   };
 }
 
@@ -2403,7 +2454,7 @@ function buildUmbrellaRoof(p, L, R) {
 
 function buildTinRoof(p, w, color) {
   const [c, g] = makeCanvas(w, 7);
-  const base = p[color], dark = p[color === 'red' ? 'rust' : 'greenDark'];
+  const base = p[color], dark = p[{ red: 'rust', blue: 'navy' }[color] || 'greenDark'];
   rect(g, 1, 0, w - 2, 1, dark);
   rect(g, 0, 1, w, 4, base);
   for (let x = 1; x < w; x += 3) rect(g, x, 1, 1, 4, dark);   // corrugations
@@ -2482,6 +2533,8 @@ function drawStationFront(g, v) {
     if (st.platform[0] + off >= W + 40 || st.platform[1] + off <= -40) continue;
     const s = v.stations[i];
     g.drawImage(s.slab, st.platform[0] + off, PLAT.TOP);
+    if (drive.on && !ui.title) drawStopMark(g, v, off);
+    if (i === LAST_STATION) drawBuffer(g, v, off);
     frontItems.length = 0;
     for (let k = 0; k < st.layout.length; k++) frontItems.push(st.layout[k]);
     for (let k = 0; k < sim.people.length; k++) { const q = sim.people[k]; if (q.st === i && !q.hidden) frontItems.push(q); }
@@ -2489,6 +2542,29 @@ function drawStationFront(g, v) {
     for (let k = 0; k < frontItems.length; k++) { const it = frontItems[k]; it.d ? drawPersonAt(g, v, it, off) : drawProp(g, v, st, it, off); }
     g.drawImage(s.roof, s.roofX + off, s.roofY);
   }
+}
+
+// Where a driver stops: a board at the platform edge, level with the
+// loco's nose when the train stands on the mark
+function drawStopMark(g, v, off) {
+  const p = v.p, x = CONFIG.TRAIN_FRONT_X + 2 + off;
+  if (x < -4 || x > W + 4) return;
+  rect(g, x, 149, 1, 8, p.grayDark);
+  rect(g, x - 2, 144, 5, 5, p.ink);
+  rect(g, x - 1, 145, 3, 3, p.glow);
+  px(g, x, 146, p.ink);
+}
+
+// The end of the line at Sylhet: a striped buffer beam on a braced frame
+function drawBuffer(g, v, off) {
+  const p = v.p, x = CONFIG.TRAIN_FRONT_X + BUFFER_O + 2 + off;
+  if (x < -16 || x > W + 4) return;
+  rect(g, x + 3, 131, 2, 15, p.grayDark);              // post with a lamp on top
+  px(g, x + 3, 131, PALETTE.red);
+  rect(g, x, 135, 3, 6, p.red);                        // buffer beam at the height of the loco's
+  for (let y = 136; y < 141; y += 2) rect(g, x, y, 3, 1, p.white);
+  for (let k = 0; k < 8; k++) px(g, x + 5 + k, 138 + k, p.gray);   // brace
+  rect(g, x - 1, 146, 16, 1, p.grayDark);
 }
 
 function drawProp(g, v, st, it, off) {
@@ -2693,7 +2769,7 @@ function personFrame(q) {
   if (q.mode === 'sit') return 4;
   if (q.mode === 'sip') return q.t % 3.4 > 2.3 ? 6 : 5;
   if (q.mode === 'guard' && sim.state === 'STOPPED' && sim.station === q.st &&
-      (sim.stopPhase === 'FLAG' || sim.stopPhase === 'HORN')) return 7 + (Math.floor(sim.clock * 4) & 1);
+      (sim.stopPhase === 'FLAG' || sim.stopPhase === 'HORN' || sim.stopPhase === 'CLEAR')) return 7 + (Math.floor(sim.clock * 4) & 1);
   return 0;
 }
 
@@ -2752,28 +2828,32 @@ function populateStation(st) {
   }
 }
 
-// Doors are open: a few passengers step off, then the waiting ones board
+// Doors are open: a few passengers step off, then the waiting ones board.
+// A driver rarely stops exactly on the mark, so the doors stand at
+// DOORS + sim.stopOffset in stop coordinates.
 function startBoarding(st) {
-  const terminus = st.index === LAST_STATION;
-  for (let i = 0; i < st.alight; i++) {
-    const door = DOORS[Math.floor(Math.random() * DOORS.length)], x = door + 2;
-    const q = spawnPerson(st, makeDesign(Math.random), x, PLAT.DOOR_FLOOR, x < 150 ? -1 : 1, 'alight');
-    const y = randWalkY(Math.random), exit = x < 150 ? -24 : W + 24;
+  const terminus = st.index === LAST_STATION, o = Math.round(sim.stopOffset);
+  // everyone gets off at the end of the line; a driver can't deliver more than they carry
+  const alight = terminus ? Math.max(st.alight, Math.min(20, drive.pax)) : drive.on ? Math.min(st.alight, drive.pax) : st.alight;
+  for (let i = 0; i < alight; i++) {
+    const door = DOORS[Math.floor(Math.random() * DOORS.length)] + o, x = door + 2;
+    const q = spawnPerson(st, makeDesign(Math.random), x, PLAT.DOOR_FLOOR, x - o < 150 ? -1 : 1, 'alight');
+    const y = randWalkY(Math.random), exit = (x - o < 150 ? -24 : W + 24) + o;   // just off screen
     q.hidden = true;
     q.delay = i * (terminus ? 0.5 : 0.45) + Math.random() * 0.6;
-    q.path = [{ x, y: PLAT.EDGE_Y, clip: door, speed: 18 },
+    q.path = [{ x, y: PLAT.EDGE_Y, clip: door, speed: 18, then: passengerOut },
               { x: x + Math.sign(exit - x) * 4, y },
               { x: exit, y, then: gone }];
   }
   for (const q of sim.people) {
     if (q.st !== st.index) continue;
     if (q.mode === 'wait') {
-      const door = nearestDoor(q.x), x = door + 2;
+      const door = nearestDoor(q.x - o) + o, x = door + 2;
       q.mode = 'board';
       q.delay = (st.alight ? 1.4 : 0.3) + Math.random() * 3;
-      q.path = [{ x, y: q.y }, { x, y: PLAT.EDGE_Y }, { x, y: PLAT.DOOR_FLOOR, clip: door, speed: 18, then: gone }];
+      q.path = [{ x, y: q.y }, { x, y: PLAT.EDGE_Y }, { x, y: PLAT.DOOR_FLOOR, clip: door, speed: 18, then: passengerIn }];
     } else if (q.mode === 'porterWait') {
-      const door = DOORS[9], x = door + 2;
+      const door = DOORS[9] + o, x = door + 2;
       q.mode = 'porter';
       q.delay = 0.5;
       q.path = [{ x, y: q.y }, { x, y: PLAT.EDGE_Y, then: r => { r.delay = 1.2; r.handed = true; } }];
@@ -2827,7 +2907,7 @@ function updatePerson(q, dt) {
         forgetPerson({ d: q.d });
         q.d = q.d2;
         q.mode = 'leave';
-        q.path = [{ x: q.x, y: 161 }, { x: W + 30, y: 161, then: gone }];
+        q.path = [{ x: q.x, y: 161 }, { x: W + 30 + Math.round(sim.stopOffset), y: 161, then: gone }];
       }
       break;
   }
@@ -2861,7 +2941,10 @@ function forgetPerson(q) {
 //
 // While STOPPED, a sub-phase runs the station routine:
 //   SETTLE > DOORS_OPEN > BOARDING > DOORS_CLOSE > FLAG > HORN > (depart)
-// and at the last station DOORS_CLOSE leads to TERMINUS instead.
+// and at the last station DOORS_CLOSE leads to PARKED > TERMINUS instead.
+// In DRIVE mode (section 8a) the driver owns some steps, which wait for
+// input: READY (open the doors), BOARDED (close them), CLEAR (depart),
+// PARKED (stop the engine); between stations the state is DRIVING.
 //
 // Departing and arriving follow a smoothstep velocity curve (zero
 // acceleration at both ends). Position is the exact integral of that
@@ -2870,7 +2953,8 @@ const sim = {
   state: 'STOPPED', stopPhase: 'SETTLE', phaseT: 0, timer: 0,
   speed: 0, dist: 0,                       // dist = world px travelled = camera x
   segStart: 0, segSpeed: 0, segDur: 0,     // current accel / brake segment
-  station: 0,                              // index of the last station stopped at
+  station: 0,                              // index of the last station stopped at (or passed)
+  stopOffset: 0,                           // how far past the stop mark the train stands (DRIVE)
   nextStop: 0,
   doorOpen: 0,                             // 0 closed .. 1 open
   wheelAngle: 0, swayPhase: 0, clock: 0, cloudDrift: 0,
@@ -2892,7 +2976,7 @@ function setState(s) {
   if (s === 'ARRIVING') {
     // fit the braking curve to the remaining distance: d = v0 * T / 2
     sim.segSpeed = sim.speed;
-    sim.segDur = 2 * (sim.nextStop - sim.dist) / sim.speed;
+    sim.segDur = Math.max(0.2, 2 * (sim.nextStop - sim.dist) / Math.max(1, sim.speed));
   } else if (s === 'DEPARTING') {
     sim.shake = 1.6;                                     // couplings snatch as the train pulls away
   } else if (s === 'STOPPED') {
@@ -2905,34 +2989,61 @@ function setState(s) {
 function setStopPhase(ph) {
   sim.stopPhase = ph;
   sim.phaseT = 0;
+  if (drive.on) syncButtons();                          // the doors button says OPEN or CLOSE
+}
+
+// Come to rest at station i, o px past its stop mark
+function arrive(i, o) {
+  sim.station = i;
+  sim.dist = STATIONS[i].dist + o;
+  sim.stopOffset = o;
+  setState('STOPPED');
 }
 
 function updateStop(dt) {
-  const st = STATIONS[sim.station];
+  const st = STATIONS[sim.station], terminus = sim.station === LAST_STATION, auto = !drive.on;
   sim.phaseT += dt;
   switch (sim.stopPhase) {
     case 'SETTLE':
-      if (sim.phaseT >= CONFIG.SETTLE_TIME) setStopPhase('DOORS_OPEN');
+      if (sim.phaseT >= CONFIG.SETTLE_TIME) setStopPhase(auto ? 'DOORS_OPEN' : 'READY');
+      break;
+    case 'READY':                                         // the driver opens the doors
+      if (auto) setStopPhase('DOORS_OPEN');
       break;
     case 'DOORS_OPEN':
       sim.doorOpen = Math.min(1, sim.phaseT / CONFIG.DOOR_TIME);
       if (sim.doorOpen >= 1) { startBoarding(st); setStopPhase('BOARDING'); }
       break;
     case 'BOARDING':
-      if ((sim.phaseT > 1 && boardingDone(st)) || sim.phaseT >= CONFIG.BOARD_TIMEOUT) setStopPhase('DOORS_CLOSE');
+      if ((sim.phaseT > 1 && boardingDone(st)) || sim.phaseT >= CONFIG.BOARD_TIMEOUT) setStopPhase(auto ? 'DOORS_CLOSE' : 'BOARDED');
+      break;
+    case 'BOARDED':                                       // the driver closes the doors
+      if (auto) setStopPhase('DOORS_CLOSE');
+      else if (terminus && drive.engine === 'OFF') setStopPhase('TERMINUS');
       break;
     case 'DOORS_CLOSE':
       sim.doorOpen = Math.max(0, 1 - sim.phaseT / CONFIG.DOOR_TIME);
-      if (sim.doorOpen <= 0) setStopPhase(sim.station === LAST_STATION ? 'TERMINUS' : 'FLAG');
+      if (sim.doorOpen <= 0) setStopPhase(terminus ? 'PARKED' : 'WAIT');
+      break;
+    case 'WAIT':                                          // a driver early on the timetable waits for departure time
+      if (auto || drive.tripT >= SCHEDULE[sim.station].dep - CONFIG.FLAG_TIME) setStopPhase('FLAG');
       break;
     case 'FLAG':                                          // guard waves the green flag
-      if (sim.phaseT >= CONFIG.FLAG_TIME) { setStopPhase('HORN'); playHorn(false); }
+      if (sim.phaseT < CONFIG.FLAG_TIME) break;
+      if (auto) { setStopPhase('HORN'); playHorn(false); }
+      else { setStopPhase('CLEAR'); toast('ALL CLEAR - DEPART', 'grassLight'); }
+      break;
+    case 'CLEAR':                                         // the driver takes the train out
+      if (auto) { setStopPhase('HORN'); playHorn(false); }
       break;
     case 'HORN':
       if (sim.phaseT >= CONFIG.HORN_TIME) setState('DEPARTING');
       break;
+    case 'PARKED':                                        // the driver shuts the engine down
+      if (auto || drive.engine === 'OFF') setStopPhase('TERMINUS');
+      break;
     case 'TERMINUS':
-      if (sim.phaseT >= 1.5) ui.complete = true;
+      if (sim.phaseT >= 1.5 && !ui.complete) finishJourney();
       break;
   }
 }
@@ -2947,15 +3058,17 @@ function startJourney() {
   sim.wxRng = mulberry32(1971);
   resetWeather();
   sim.hornTimer = 8;
-  sim.station = 0;
-  sim.dist = STATIONS[0].dist;
   sim.doorOpen = 0;
-  setState('STOPPED');
+  arrive(0, 0);
+  resetDrive();
   ui.complete = false;
+  panelSprites = null;
 }
 
 function updateJourney(dt) {
   const V = CONFIG.CRUISE_SPEED;
+  if (ui.title) return;                                 // the train waits behind the title card
+  if (drive.on) { updateDrive(dt); return; }
   switch (sim.state) {
     case 'STOPPED':
       updateStop(dt);
@@ -2970,9 +3083,9 @@ function updateJourney(dt) {
       break;
     }
 
-    case 'TRAVELING':
-      sim.speed = V;
-      sim.dist += V * dt;
+    case 'TRAVELING':                                   // (eases back to cruise when the driver hands over)
+      sim.speed += Math.max(-12 * dt, Math.min(12 * dt, V - sim.speed));
+      sim.dist += sim.speed * dt;
       if (sim.nextStop - sim.dist <= V * CONFIG.BRAKE_TIME / 2) setState('ARRIVING');
       break;
 
@@ -2982,14 +3095,393 @@ function updateJourney(dt) {
       sim.speed = sim.segSpeed * (1 - smoothstep(u));
       sim.dist = sim.segStart + sim.segSpeed * T * (u - u ** 3 + u ** 4 / 2);
       if (u >= 1) {
-        sim.station++;
-        sim.dist = STATIONS[sim.station].dist;
+        arrive(sim.station + 1, 0);
         sim.shake = 1.4;                                 // the last jolt as the brakes hold
-        setState('STOPPED');
       }
       break;
     }
   }
+}
+
+// =====================================================================
+// 8a. DRIVER MODE
+// =====================================================================
+// The player at the controls: start the engine, work one combined lever
+// (power notches up, brake steps down), stop with every door along the
+// platform, open and close the doors, wait for the guard's flag, keep to
+// the speed limits and the timetable. Score: stopping accuracy,
+// punctuality, passengers carried and their comfort, minus penalties.
+const drive = {
+  on: false,                               // DRIVE mode; AUTO when false
+  engine: 'OFF', engineT: 0, rpm: 0,       // OFF | CRANK | ON | SHUTDOWN; rpm 0..1 (0.3 = idle)
+  lever: 0, accel: 0,                      // lever: -5 emergency, -4..-1 brake, 0 coast, 1..8 power
+  headlight: true, horn: false,
+  tripT: 0,                                // s since the trip began: the timetable clock
+  limit: CONFIG.DRIVE.LIMIT, over: false, beepT: 0,
+  pts: { stops: 0, time: 0, pax: 0, penalty: 0 }, comfort: 100, pax: 0,
+  final: null,                             // the score card once the trip is complete
+};
+const EB = -CONFIG.DRIVE.BRAKES - 1;       // the emergency brake position
+const leverLabel = n => n > 0 ? 'P' + n : n === EB ? 'EB' : n < 0 ? 'B' + -n : 'N';
+
+// Timetable: each leg run a little under the line speed, plus time to get
+// going and to stop, plus some slack; a dwell at each stop. Built once the
+// terrain (and so the speed limits) is laid out. The day's clock runs on
+// it, so a late train arrives later in the evening.
+const SCHEDULE = [];
+let HOURS_PER_S = 0;
+function buildSchedule() {
+  const D = CONFIG.DRIVE;
+  SCHEDULE.push({ arr: 0, dep: D.FIRST_DEP });
+  for (let i = 1; i < STATIONS.length; i++) {
+    let run = 0;
+    for (let d = STATIONS[i - 1].dist; d < STATIONS[i].dist; d += 10) run += 10 / Math.min(D.SCHED_SPEED, speedLimitAt(d) - 6);
+    const arr = SCHEDULE[i - 1].dep + run + (CONFIG.ACCEL_TIME + CONFIG.BRAKE_TIME) / 2 + D.SLACK;
+    SCHEDULE.push({ arr, dep: arr + D.DWELL });
+  }
+  HOURS_PER_S = (CONFIG.HOUR_END - CONFIG.HOUR_START) / SCHEDULE[LAST_STATION].arr;
+}
+const tripHour = t => CONFIG.HOUR_START + t * HOURS_PER_S;
+const lateMinutes = (t, due) => (t - due) * HOURS_PER_S * 60;
+
+// Where the train may stand at a station and still have every door on the
+// platform: [lo, hi] px around the stop mark. The terminus ends in a buffer stop.
+const DOORS_LO = Math.min(...DOORS), DOORS_HI = Math.max(...DOORS) + 4, BUFFER_O = 72;
+const STOP_WIN = [0, 0];
+function stopWindow(st) {
+  const [L, R] = st.platform;
+  STOP_WIN[0] = Math.max(-60, L + 2 - DOORS_LO);
+  STOP_WIN[1] = st.index === LAST_STATION ? BUFFER_O : Math.min(60, R - 2 - DOORS_HI);
+  return STOP_WIN;
+}
+
+// Line speed: slower through the tea and hill curves, over the Meghna
+// bridge and through stations
+function speedLimitAt(d) {
+  const D = CONFIG.DRIVE;
+  let lim = sectionWeight('tea', d) + sectionWeight('hills', d) > 0.5 ? D.LIMIT_HILLS : D.LIMIT;
+  if (d > BRIDGE.u0 - 460 && d < BRIDGE.u1 + 140) lim = Math.min(lim, D.LIMIT_BRIDGE);   // from Bhairab over the Meghna
+  for (let i = 0; i < STATIONS.length; i++)
+    if (d > STATIONS[i].dist - 280 && d < STATIONS[i].dist + 160) return Math.min(lim, D.LIMIT_STATION);
+  return lim;
+}
+
+function resetDrive() {
+  const P = drive.pts;
+  P.stops = P.time = P.pax = P.penalty = 0;
+  drive.comfort = 100; drive.pax = 0; drive.final = null; drive.tripT = 0;
+  drive.lever = 0; drive.over = false;
+  toasts.length = 0; popPool.n = 0;
+  hornOff();
+  if (drive.on) { setEngine('OFF'); drive.rpm = 0; setStopPhase('READY'); }
+}
+
+// AUTO hands the train to the driver, or takes it back, wherever it is
+function setDriveMode(on) {
+  if (on === drive.on) return;
+  drive.on = on;
+  ui.speed = 1;
+  toasts.length = 0;
+  if (on) {
+    drive.lever = 0;
+    drive.tripT = (journeyHour() - CONFIG.HOUR_START) / HOURS_PER_S;     // the clock carries on
+    if (sim.state !== 'STOPPED') sim.state = 'DRIVING';
+    else if (sim.stopPhase === 'SETTLE') setStopPhase('READY');
+    else if (sim.stopPhase === 'HORN') setStopPhase('CLEAR');
+    toast('YOU HAVE THE CONTROLS', 'glow');
+  } else {
+    hornOff();
+    if (drive.engine === 'OFF' || drive.engine === 'SHUTDOWN') startEngine();
+    if (sim.state === 'DRIVING') {
+      const st = STATIONS[sim.station + 1], o = st ? sim.dist - st.dist : 0, w = st && stopWindow(st);
+      if (st && (sim.speed < 1 || st.index === LAST_STATION) && o >= w[0] && o <= w[1]) {
+        arrive(st.index, o);                             // standing at (or rolling into) the platform
+      } else {
+        if (st && o > 0) missStation(false);             // already past the mark: on to the next stop
+        setState(sim.speed > 1 ? 'TRAVELING' : 'DEPARTING');
+      }
+    }
+  }
+  syncButtons();
+}
+
+// --- engine ---------------------------------------------------------------
+function setEngine(s) {
+  drive.engine = s;
+  drive.engineT = 0;
+  syncButtons();
+}
+function startEngine() { setEngine('CRANK'); playCrank(); }
+
+function toggleEngine() {
+  if (drive.engine === 'OFF') {
+    if (drive.lever > 0) { toast('LEVER TO N FIRST', 'amber'); return; }
+    startEngine();
+  } else if (drive.engine === 'ON') {
+    if (sim.speed > 0.5) toast('ENGINE OFF - COASTING', 'amber');
+    setEngine('SHUTDOWN');
+    playThump(0.12);
+  }
+}
+
+// Engine speed: cranking, idling, revving with the notch (in AUTO with the
+// journey phase), winding down
+function updateEngine(dt) {
+  const D = CONFIG.DRIVE;
+  drive.engineT += dt;
+  let target = 0, rate = 0.5;
+  switch (drive.engine) {
+    case 'CRANK':
+      target = 0.12;
+      if (drive.engineT >= D.CRANK_TIME) {              // it catches: a cough of black smoke
+        setEngine('ON');
+        drive.rpm = 0.5;
+        sim.shake = Math.max(sim.shake, 0.7);
+        for (let i = 0; i < 6; i++) emitPuff(true);
+        playThump(0.25);
+        toast('ENGINE RUNNING', 'grassLight');
+      }
+      break;
+    case 'SHUTDOWN':
+      rate = 0.16;
+      if (drive.engineT >= D.SHUTDOWN_TIME) { setEngine('OFF'); playAir(0.9, 0.07); }
+      break;
+    case 'ON':
+      target = drive.on ? 0.3 + 0.7 * (sim.doorOpen > 0 ? 0 : Math.max(0, drive.lever)) / D.NOTCHES
+             : sim.state === 'DEPARTING' ? 0.95 : sim.state === 'TRAVELING' ? 0.65 : sim.stopPhase === 'HORN' ? 0.6 : 0.3;
+      if (target > drive.rpm) rate = 0.6;               // spools up a little faster than it winds down
+      break;
+  }
+  drive.rpm += Math.max(-rate * dt, Math.min(rate * dt, target - drive.rpm));
+}
+
+// --- controls ---------------------------------------------------------------
+function setLever(n) {
+  const was = drive.lever;
+  drive.lever = Math.max(EB, Math.min(CONFIG.DRIVE.NOTCHES, n));
+  if (drive.lever === was) return;
+  playNotch();
+  if (drive.lever === EB) { toast('EMERGENCY BRAKE!', 'red'); playAir(1.3, 0.14); }
+  else if (was < 0 && drive.lever >= 0 && sim.speed < 1) playAir(0.5, 0.04);    // brakes released
+  if (drive.lever > 0 && was <= 0) {
+    if (drive.engine === 'OFF' || drive.engine === 'SHUTDOWN') toast('START THE ENGINE [E]', 'amber');
+    else if (sim.doorOpen > 0) toast('CLOSE THE DOORS [O]', 'amber');
+  }
+}
+
+function toggleLight() {
+  drive.headlight = !drive.headlight;
+  playNotch();
+  toast(drive.headlight ? 'HEADLIGHT ON' : 'HEADLIGHT OFF', 'white');
+}
+
+// The doors button: open them at a platform once stopped, close them after boarding
+function toggleDoors() {
+  if (sim.state === 'STOPPED') {
+    switch (sim.stopPhase) {
+      case 'SETTLE': case 'READY': setStopPhase('DOORS_OPEN'); playAir(0.6, 0.06); break;
+      case 'BOARDING': toast('PASSENGERS STILL BOARDING', 'amber'); break;
+      case 'BOARDED': setStopPhase('DOORS_CLOSE'); playChime(); break;
+      case 'WAIT': case 'FLAG': case 'CLEAR': case 'PARKED': toast('DOORS LOCKED', 'grayLight'); break;
+    }
+    return;
+  }
+  if (sim.speed > 0.3) { toast('STOP THE TRAIN FIRST', 'amber'); return; }
+  const st = STATIONS[sim.station + 1];
+  if (!st) return;
+  const o = sim.dist - st.dist, w = stopWindow(st);
+  if (o < -400) toast('NO PLATFORM HERE', 'amber');
+  else if (o < w[0]) toast('PLATFORM AHEAD - ' + Math.ceil(w[0] - o) + ' M', 'amber');
+  else if (o > w[1]) toast('OVERSHOT THE PLATFORM', 'red');
+  else {
+    arrive(st.index, o);
+    scoreArrival(st.index, o);
+    setStopPhase('DOORS_OPEN');
+    playAir(0.6, 0.06);
+  }
+}
+
+// --- driving ----------------------------------------------------------------
+// Traction follows the engine (it has to spool up), fades at speed and is
+// cut while a door is open; brakes, rolling and air resistance oppose it
+function updateDrive(dt) {
+  const D = CONFIG.DRIVE, v = sim.speed;
+  drive.tripT += dt;
+  if (sim.state === 'STOPPED') updateStop(dt);
+  const power = drive.lever > 0 && drive.engine === 'ON' && sim.doorOpen === 0 && !ui.complete ? drive.lever / D.NOTCHES : 0;
+  const trac = Math.min(power, Math.max(0, (drive.rpm - 0.3) / 0.7)) * D.ACCEL * Math.min(1, D.KNEE / Math.max(v, 1));
+  if (sim.state === 'STOPPED') {
+    drive.accel = 0;
+    if (trac <= 0 || !depart()) return;
+  }
+  const brake = drive.lever === EB ? D.EMERGENCY : drive.lever < 0 ? -drive.lever * D.BRAKE : 0;
+  const resist = v > 0 ? D.DRAG[0] + D.DRAG[1] * v * v + brake : 0;
+  sim.speed = Math.max(0, v + (trac - resist) * dt);
+  sim.dist += (v + sim.speed) / 2 * dt;
+  drive.accel = (sim.speed - v) / dt;
+  if (v > 1.5 && sim.speed === 0) sim.shake = Math.max(sim.shake, drive.lever <= -3 ? 1.2 : 0.5);   // the brakes hold
+  const harsh = Math.abs(drive.accel) - D.COMFORT_ACCEL;  // passengers thrown about
+  if (harsh > 0) drive.comfort = Math.max(0, drive.comfort - harsh * dt * 1.5);
+  checkSpeed(dt);
+  checkLine();
+}
+
+// Pulling out of a station: anyone still waiting on the platform is left behind
+function depart() {
+  if (sim.station === LAST_STATION) return false;
+  const st = STATIONS[sim.station];
+  let waiting = 0;
+  for (const q of sim.people) if (q.st === st.index && q.mode === 'wait') waiting++;
+  if (waiting) penalty(waiting * 40, 'LEFT ' + waiting + ' BEHIND');
+  else if (sim.stopPhase === 'FLAG' || sim.stopPhase === 'WAIT') penalty(150, 'LEFT BEFORE THE FLAG');
+  sim.state = 'DRIVING';
+  sim.stopPhase = null;
+  sim.shake = Math.max(sim.shake, 0.5 + drive.lever * 0.12);   // couplings snatch
+  return true;
+}
+
+function checkSpeed(dt) {
+  drive.limit = speedLimitAt(sim.dist);
+  const over = sim.speed > drive.limit + 3;
+  if (over && !drive.over) toast('OVERSPEED! LIMIT ' + drive.limit, 'red');
+  drive.over = over;
+  if (!over) return;
+  drive.pts.penalty -= 20 * dt;
+  if ((drive.beepT -= dt) <= 0) { drive.beepT = 0.45; playBeep(); }
+}
+
+// Rolling past a platform without stopping, or into the buffers at Sylhet
+function checkLine() {
+  const st = STATIONS[sim.station + 1];
+  if (!st) return;
+  const o = sim.dist - st.dist;
+  if (st.index !== LAST_STATION) { if (o > stopWindow(st)[1] + 40) missStation(true); return; }
+  if (o < BUFFER_O) return;
+  const hard = sim.speed > 12, bump = sim.speed > 3;
+  sim.dist = st.dist + BUFFER_O;
+  sim.speed = 0;
+  if (!bump) return;                                    // just leaning on them
+  sim.shake = hard ? 3 : 1;
+  playThump(hard ? 0.6 : 0.2);
+  if (hard) { drive.comfort = Math.max(0, drive.comfort - 35); penalty(300, 'HIT THE BUFFERS!'); }
+}
+
+function missStation(announce) {
+  sim.station++;
+  sim.nextStop = sim.station < LAST_STATION ? STATIONS[sim.station + 1].dist : Infinity;
+  if (announce) penalty(400, 'MISSED ' + STATIONS[sim.station].en);
+}
+
+function penalty(n, msg) {
+  drive.pts.penalty -= n;
+  toast(msg + ' -' + n, 'red');
+}
+
+// Doors opened at a platform: how close to the mark, how close to time
+function scoreArrival(i, o) {
+  const a = Math.abs(o), late = lateMinutes(drive.tripT, SCHEDULE[i].arr), ok = CONFIG.DRIVE.ON_TIME;
+  const tp = late <= ok ? 200 : Math.max(-200, Math.round(200 - 6 * (late - ok)));   // early is fine: departure waits
+  drive.pts.time += tp;
+  toast((late < -ok ? 'EARLY ' + Math.round(-late) + ' MIN' : late <= ok ? 'ON TIME' : 'LATE ' + Math.round(late) + ' MIN') +
+        (tp < 0 ? ' ' : ' +') + tp, tp >= 150 ? 'grassLight' : tp > 0 ? 'amber' : 'red');
+  const [label, pts, col] = a <= 3 ? ['PERFECT STOP', 500, 'glow'] : a <= 10 ? ['GREAT STOP', 300, 'grassLight']
+                          : a <= 25 ? ['GOOD STOP', 150, 'skyLight'] : ['STOPPED', 50, 'white'];
+  drive.pts.stops += pts;
+  toast(label + ' +' + pts, col, true);
+  playScore(a <= 10);
+}
+
+function finishJourney() {
+  ui.complete = true;
+  panelSprites = null;
+  hornOff();
+  if (!drive.on) return;
+  const P = drive.pts, comfort = Math.round(drive.comfort * 4);
+  const total = Math.round(P.stops + P.time + P.pax + comfort + P.penalty);
+  const best = readBest();
+  if (total > best) try { localStorage.setItem('ipt-best', String(total)); } catch (e) { /* storage blocked */ }
+  drive.final = { total, comfort, best, record: total > best && best > 0,
+                  stars: total >= 3000 ? 3 : total >= 2200 ? 2 : total >= 1200 ? 1 : 0 };
+  playScore(true);
+}
+
+// How hard the brakes bite, 0..1 (sparks) and how loudly they squeal near a stop
+function brakeEffort() {
+  if (drive.on) return sim.state === 'DRIVING' && drive.lever <= -2 ? (-drive.lever - 1) / 4 : 0;
+  return sim.state === 'ARRIVING' ? Math.sin(Math.min(1, sim.timer / sim.segDur) * Math.PI) : 0;
+}
+function squealLevel() {
+  const v = sim.speed, k = drive.on ? (drive.lever < 0 ? Math.min(1, -drive.lever / 3) : 0) : sim.state === 'ARRIVING' ? 0.6 : 0;
+  return v > 0.3 && v < 26 ? k * (1 - v / 26) * Math.min(1, v / 2) : 0;
+}
+
+// --- messages: toasts across the sky, +10s over the doors -------------------
+const toasts = [], TOAST_LIFE = 2.6;
+function toast(text, col = 'white', big = false) {
+  if (!drive.on) return;
+  const last = toasts[toasts.length - 1];
+  if (last && last.text === text) { last.t = 0; return; }
+  toasts.push({ text, col, big, t: 0 });
+  if (toasts.length > 3) toasts.shift();
+}
+function updateToasts(dt) {
+  for (let i = toasts.length - 1; i >= 0; i--) if ((toasts[i].t += dt) > TOAST_LIFE) toasts.splice(i, 1);
+}
+
+const popPool = makePool(24, () => ({ x: 0, y: 0, t: 0, text: '', col: '' }));
+function popup(x, y, text, col) {
+  const q = poolSpawn(popPool, 24);
+  if (q) { q.x = x; q.y = y; q.t = 0; q.text = text; q.col = col; }
+}
+function updatePopups(dt) {
+  for (let i = 0; i < popPool.n; ) { if ((popPool.items[i].t += dt) < 1.2) i++; else poolKill(popPool, i); }
+}
+
+// Passengers in and out: a head count, and a fare for the driver
+const screenXOf = q => Math.round(q.x + STATIONS[q.st].dist - Math.floor(sim.dist));
+function passengerIn(q) {
+  q.gone = true;
+  drive.pax++;
+  if (drive.on) { drive.pts.pax += 10; popup(screenXOf(q), PLAT.DOOR_TOP - 6, '+10', 'glow'); }
+}
+function passengerOut(q) {
+  drive.pax = Math.max(0, drive.pax - 1);
+  if (drive.on) { drive.pts.pax += 10; popup(screenXOf(q), PLAT.DOOR_TOP - 6, '+10', 'white'); }
+}
+
+// What the driver should do next, shown under the route map
+function driveHint() {
+  const e = drive.engine;
+  if (ui.complete) return '';
+  if (e === 'CRANK') return 'STARTING THE ENGINE...';
+  const power = drive.lever < 0 ? 'RELEASE THE BRAKE [↑]' : 'APPLY POWER [↑]';
+  if (sim.state === 'STOPPED') {
+    const term = sim.station === LAST_STATION;
+    switch (sim.stopPhase) {
+      case 'SETTLE': case 'READY': return e === 'OFF' && sim.station === 0 ? 'START THE ENGINE [E]' : 'OPEN THE DOORS [O]';
+      case 'DOORS_OPEN': case 'BOARDING': return term ? 'PASSENGERS GETTING OFF...' : 'PASSENGERS BOARDING...';
+      case 'BOARDED': return !term ? 'CLOSE THE DOORS [O]' : e === 'ON' ? 'STOP THE ENGINE [E]' : '';
+      case 'DOORS_CLOSE': return 'DOORS CLOSING...';
+      case 'WAIT': return 'DEPARTS AT ' + hhmm(tripHour(SCHEDULE[sim.station].dep)) + ' - WAIT';
+      case 'FLAG': return 'WAIT FOR THE GUARD...';
+      case 'CLEAR': return e === 'OFF' ? 'START THE ENGINE [E]' : e === 'ON' ? power : '';
+      case 'PARKED': return e === 'ON' ? 'STOP THE ENGINE [E]' : '';
+    }
+    return '';
+  }
+  if (drive.over) return 'SLOW DOWN! LIMIT ' + drive.limit;
+  const st = STATIONS[sim.station + 1];
+  if (!st) return '';
+  const o = sim.dist - st.dist, w = stopWindow(st);
+  if (sim.speed < 0.3) {
+    if (o >= w[0] && o <= w[1]) return 'OPEN THE DOORS [O]';
+    if (e === 'OFF') return 'START THE ENGINE [E]';
+    if (o > w[1]) return 'OVERSHOT! DRIVE ON [↑]';
+    if (o > -160) return 'CREEP UP ' + Math.ceil(w[0] - o) + ' M [↑]';
+    return power;
+  }
+  if (o > -440 && o < w[0]) return 'BRAKE FOR ' + st.en + ' [↓]';
+  return '';
 }
 
 // =====================================================================
@@ -3005,7 +3497,9 @@ function journeyHour() {
 }
 
 function updateHour(dt) {
-  const fixed = TIME_MODES[ui.timeMode][1], target = fixed === null ? journeyHour() : fixed;
+  // AUTO follows the distance travelled; a driver's day runs on the timetable clock
+  const fixed = TIME_MODES[ui.timeMode][1];
+  const target = fixed !== null ? fixed : drive.on ? Math.min(23.9, tripHour(drive.tripT)) : journeyHour();
   const diff = ((target - sim.hour + 36) % 24) - 12, step = CONFIG.HOUR_EASE * dt;   // shortest way round
   sim.hour = (sim.hour + Math.max(-step, Math.min(step, diff)) + 24) % 24;
   sim.night = nightAt(sim.hour);
@@ -3260,8 +3754,10 @@ function drawGlow(g) {
       g.drawImage(spr, Math.round(lights.x[i]) - r, Math.round(lights.y[i]) - r);
     }
     g.globalAlpha = n;
-    g.drawImage(GLOW.cone, CONFIG.TRAIN_FRONT_X, LAYER_Y.loco);
-    g.drawImage(GLOW.flare, CONFIG.TRAIN_FRONT_X - 8, LAYER_Y.loco - 3);
+    if (drive.engine !== 'OFF' && (drive.headlight || !drive.on)) {   // the headlight needs the engine
+      g.drawImage(GLOW.cone, CONFIG.TRAIN_FRONT_X, LAYER_Y.loco);
+      g.drawImage(GLOW.flare, CONFIG.TRAIN_FRONT_X - 8, LAYER_Y.loco - 3);
+    }
     for (let i = 0; i < fireflyPool.n; i++) {
       const f = fireflyPool.items[i], b = Math.sin(f.age * f.rate + f.ph);
       if (b <= 0.1) continue;
@@ -3320,9 +3816,9 @@ function updateFireflies(dt) {
 // --- brake sparks --------------------------------------------------------------
 const sparkPool = makePool(CONFIG.SPARK_MAX[0], () => ({ x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 0 }));
 function updateSparks(dt) {
-  if (sim.state === 'ARRIVING' && sim.speed > 4) {
-    const u = Math.min(1, sim.timer / sim.segDur);
-    sim.sparkAcc += 90 * Math.sin(u * Math.PI) * dt;   // hardest braking mid-way
+  const effort = brakeEffort();                         // AUTO: hardest braking mid-way
+  if (effort > 0 && sim.speed > 4) {
+    sim.sparkAcc += 90 * effort * dt;
     while (sim.sparkAcc >= 1) {
       sim.sparkAcc -= 1;
       const s = poolSpawn(sparkPool, cap('SPARK_MAX'));
@@ -3474,8 +3970,10 @@ function drawRain(g) {
 }
 
 function update(dt) {
+  updateEngine(dt);
   updateJourney(dt);
   updatePeople(dt);
+  updatePopups(dt);
   updateUI(dt);
   sim.clock += dt;
   sim.cloudDrift += dt * 1.5;
@@ -3494,7 +3992,7 @@ function update(dt) {
 }
 
 // Now and then the driver sounds the horn passing a village
-function villageHorn(dt) {
+function villageHorn(dt) {                             // (a driver blows their own horn)
   if (sim.state !== 'TRAVELING' || sectionWeight('village', sim.dist) < 0.5) return;
   if ((sim.hornTimer -= dt) > 0) return;
   sim.hornTimer = 12 + sim.fxRng() * 14;
@@ -3505,17 +4003,19 @@ function villageHorn(dt) {
 // 9. UI, SOUND AND INPUT
 // =====================================================================
 const canvas = document.getElementById('screen');
-const ui = { bannerY: -40, bannerSt: 1, complete: false, panelY: -110, hover: false, debugW: 0,
-             paused: false, speed: 1, timeMode: 0, rainMode: 0 };     // toolbar state
+const ui = { bannerY: -40, bannerSt: 1, complete: false, panelY: -150, hover: false, debugW: 0,
+             paused: false, speed: 1, timeMode: 0, rainMode: 0,      // toolbar state
+             title: true, titleSel: 1 };                              // title card: 0 WATCH, 1 DRIVE
 const input = { debug: false, fast: false };
 
 function updateUI(dt) {
   const next = sim.station + 1;
-  const show = next <= LAST_STATION &&
-    (sim.state === 'ARRIVING' || (sim.state === 'TRAVELING' && sim.nextStop - sim.dist < 900));
+  const show = next <= LAST_STATION && (sim.state === 'ARRIVING' ||
+    ((sim.state === 'TRAVELING' || sim.state === 'DRIVING') && sim.nextStop - sim.dist < 900));
   if (show) ui.bannerSt = next;                           // latched while it slides out
-  ui.bannerY += ((show ? 19 : -40) - ui.bannerY) * Math.min(1, dt * 5);   // slides out under the route map
-  ui.panelY += ((ui.complete ? 44 : -110) - ui.panelY) * Math.min(1, dt * 4);
+  // slides out under the route map (under the driver's panels in DRIVE)
+  ui.bannerY += ((show ? (drive.on ? 50 : 19) : -40) - ui.bannerY) * Math.min(1, dt * 5);
+  ui.panelY += ((ui.complete ? (drive.final ? 24 : 44) : -150) - ui.panelY) * Math.min(1, dt * 4);
 }
 
 // "NEXT STATION: <bangla> / <english>", pre-rendered once per station
@@ -3544,10 +4044,21 @@ function drawBanner(g) {
   g.drawImage(b, Math.max(input.debug ? ui.debugW + 4 : 2, (W - b.width) >> 1), y);
 }
 
-// "Journey complete" panel with a restart button (normal + hover sprites)
+// "Journey complete" panel with a restart button (normal + hover sprites).
+// After a drive it grows a score card: the breakdown, stars, best score.
 const PANEL = { w: 172, h: 64 };
 const COMPLETE_BN = textMask('যাত্রা সম্পন্ন', CONFIG.BN_SIZE);
+const STAR = ['....x....', '...xxx...', 'xxxxxxxxx', '.xxxxxxx.', '..xxxxx..', '.xxx.xxx.', '.xx...xx.'];
 let panelSprites = null;
+
+function readBest() {
+  try { return +localStorage.getItem('ipt-best') || 0; } catch (e) { return 0; }
+}
+
+function sizePanel() {
+  PANEL.w = drive.final ? 184 : 172;
+  PANEL.h = drive.final ? 134 : 64;
+}
 
 function panelButton() {
   const bw = textWidth('RESTART TRIP') + 12, bh = 11;
@@ -3555,19 +4066,37 @@ function panelButton() {
 }
 
 function buildPanel(hover) {
-  const { w, h } = PANEL, [c, g] = makeCanvas(w, h), m = COMPLETE_BN;
+  sizePanel();
+  const { w, h } = PANEL, [c, g] = makeCanvas(w, h), m = COMPLETE_BN, P = PALETTE;
   const first = STATIONS[0], last = STATIONS[LAST_STATION];
-  rect(g, 0, 0, w, h, PALETTE.slate);
-  rect(g, 1, 1, w - 2, h - 2, PALETTE.ink);
+  rect(g, 0, 0, w, h, P.slate);
+  rect(g, 1, 1, w - 2, h - 2, P.ink);
   const title = 'JOURNEY COMPLETE';
-  drawText2x(g, title, (w - title.length * 8 + 2) >> 1, 7, PALETTE.glow);
-  drawMask(g, m, (w - m.w) >> 1, 21, PALETTE.white);
+  drawText2x(g, title, (w - title.length * 8 + 2) >> 1, 7, P.glow);
+  drawMask(g, m, (w - m.w) >> 1, 21, P.white);
   const route = first.en + ' > ' + last.en + '  ' + (last.km - first.km) + ' KM';
-  drawText(g, route, (w - textWidth(route)) >> 1, 25 + m.h, PALETTE.grayLight);
+  drawText(g, route, (w - textWidth(route)) >> 1, 25 + m.h, P.grayLight);
+  const F = drive.final;
+  if (F) {
+    const S = drive.pts, y0 = 36 + m.h;
+    const rows = [['STOPS', S.stops], ['PUNCTUALITY', S.time], ['PASSENGERS', S.pax],
+                  ['COMFORT ' + Math.round(drive.comfort) + '%', F.comfort], ['PENALTIES', Math.round(S.penalty)]];
+    rows.forEach(([label, val], i) => {
+      drawText(g, label, 14, y0 + i * 8, P.grayLight);
+      drawText(g, String(val), w - 14 - textWidth(String(val)), y0 + i * 8, val < 0 ? P.red : P.white);
+    });
+    const ty = y0 + rows.length * 8 + 2;
+    rect(g, 14, ty - 2, w - 28, 1, P.slate);
+    drawText(g, 'TOTAL', 14, ty + 1, P.glow);
+    drawText2x(g, String(F.total), w - 12 - String(F.total).length * 8, ty - 1, P.glow);
+    for (let i = 0; i < 3; i++) stamp(g, STAR, 14 + i * 11, ty + 12, { x: i < F.stars ? P.glow : P.indigo });
+    const best = F.record ? 'NEW RECORD!' : 'BEST ' + Math.max(F.best, F.total);
+    drawText(g, best, w - 14 - textWidth(best), ty + 13, F.record ? P.glow : P.grayLight);
+  }
   const b = panelButton();
-  rect(g, b.x, b.y, b.w, b.h, PALETTE.grassLight);
-  rect(g, b.x + 1, b.y + 1, b.w - 2, b.h - 2, hover ? PALETTE.grass : PALETTE.green);
-  drawText(g, 'RESTART TRIP', b.x + 6, b.y + 3, PALETTE.white);
+  rect(g, b.x, b.y, b.w, b.h, P.grassLight);
+  rect(g, b.x + 1, b.y + 1, b.w - 2, b.h - 2, hover ? P.grass : P.green);
+  drawText(g, 'RESTART TRIP', b.x + 6, b.y + 3, P.white);
   return c;
 }
 
@@ -3582,6 +4111,169 @@ function buttonHit(x, y) {
   if (!ui.complete) return false;
   const b = panelButton(), bx = ((W - PANEL.w) >> 1) + b.x, by = Math.round(ui.panelY) + b.y;
   return x >= bx && x < bx + b.w && y >= by && y < by + b.h;
+}
+
+// --- title card: WATCH the journey or DRIVE it ------------------------------
+const TITLE = { w: 208, h: 100, y: 38, bn: textMask('ঢাকা থেকে সিলেট', CONFIG.BN_SIZE), sprite: null, best: readBest() };
+const TITLE_OPTS = [['WATCH', 'SIT BACK AND ENJOY'], ['DRIVE', 'YOU ARE THE DRIVER']];
+const TITLE_HITS = TITLE_OPTS.map(() => ({ x: 0, y: 0, w: 80, h: 15 }));
+
+function buildTitle() {
+  const { w, h, bn } = TITLE, [c, g] = makeCanvas(w, h), P = PALETTE;
+  rect(g, 0, 0, w, h, P.slate);
+  rect(g, 1, 1, w - 2, h - 2, P.ink);
+  rect(g, 1, h - 2, w - 2, 1, P.green);
+  const t = 'INTERCITY PIXEL TRAIN';
+  drawText2x(g, t, (w - t.length * 8 + 2) >> 1, 6, P.glow);
+  drawMask(g, bn, (w - bn.w) >> 1, 20, P.white);
+  const route = STATIONS.map(s => s.code).join(' > ') + '   ' + STATIONS[LAST_STATION].km + ' KM';
+  drawText(g, route, (w - textWidth(route)) >> 1, 23 + bn.h, P.grayLight);
+  const keys = 'E ENGINE  ↑↓ LEVER  O DOORS  H HORN  L LIGHT';
+  drawText(g, keys, (w - textWidth(keys)) >> 1, h - 19, P.slate);
+  const foot = '←→ CHOOSE   ENTER START' + (TITLE.best ? '   BEST ' + TITLE.best : '');
+  drawText(g, foot, (w - textWidth(foot)) >> 1, h - 11, P.grayLight);
+  return c;
+}
+
+function drawTitle(g) {
+  const x0 = (W - TITLE.w) >> 1, y0 = TITLE.y, P = PALETTE;
+  g.drawImage(TITLE.sprite || (TITLE.sprite = buildTitle()), x0, y0);
+  for (let i = 0; i < TITLE_OPTS.length; i++) {
+    const [label, sub] = TITLE_OPTS[i], r = TITLE_HITS[i], sel = ui.titleSel === i;
+    r.x = x0 + 16 + i * 96; r.y = y0 + 48;
+    rect(g, r.x, r.y, r.w, r.h, sel ? P.glow : P.slate);
+    rect(g, r.x + 1, r.y + 1, r.w - 2, r.h - 2, sel ? (i ? P.green : P.blue) : P.navy);
+    drawText2x(g, label, r.x + ((r.w - label.length * 8 + 2) >> 1), r.y + 3, sel ? P.white : P.grayLight);
+    drawText(g, sub, r.x + ((r.w - textWidth(sub)) >> 1), r.y + 19, sel ? P.white : P.gray);
+  }
+}
+
+function titleHit(x, y) {
+  for (let i = 0; i < TITLE_HITS.length; i++) {
+    const r = TITLE_HITS[i];
+    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return i;
+  }
+  return -1;
+}
+
+// Leave the title card: AUTO cranks the engine and carries on as before;
+// DRIVE leaves the engine cold for the driver
+function beginTrip(driving) {
+  if (!ui.title) return;
+  ui.title = false;
+  if (driving) { setDriveMode(true); resetDrive(); }
+  else if (drive.engine === 'OFF') startEngine();
+  syncButtons();
+}
+
+// --- DRIVE mode: the driver's panels, the next-step hint, messages ----------
+function hudBox(g, x, y, w, h) {
+  rect(g, x, y, w, h, PALETTE.slate);
+  rect(g, x + 1, y + 1, w - 2, h - 2, PALETTE.ink);
+}
+const textRight = (g, s, xr, y, col) => drawText(g, s, xr - textWidth(s), y, col);
+
+function drawDriveHUD(g) {
+  const P = PALETTE, D = CONFIG.DRIVE, blink = Math.floor(sim.clock * 4) & 1, E = drive.engine;
+  // left: speedometer, limit board, the lever, engine, passengers
+  let x = 2, y = 2;
+  hudBox(g, x, y, 76, 44);
+  const v = String(Math.round(sim.speed));
+  drawText2x(g, v, x + 28 - v.length * 8, y + 4, drive.over && blink ? P.red : P.white);
+  drawText(g, 'KM/H', x + 30, y + 9, P.grayLight);
+  const lim = String(drive.limit);
+  rect(g, x + 52, y + 3, 21, 13, P.red);
+  rect(g, x + 54, y + 5, 17, 9, P.white);
+  drawText(g, lim, x + 52 + ((21 - textWidth(lim)) >> 1), y + 7, P.ink);
+  const ly = y + 18, l = drive.lever;                    // brake steps on the left, power on the right
+  for (let n = EB; n <= D.NOTCHES; n++) {
+    const cx = x + 4 + (n - EB) * 4, on = l > 0 ? n > 0 && n <= l : l < 0 ? n < 0 && n >= l : n === 0;
+    rect(g, cx, ly, 3, 5, n > 0 ? (on ? P.grassLight : P.greenDeep) : n < 0 ? (on ? (n === EB ? P.red : P.amber) : P.brownDark)
+                         : on ? P.white : P.grayDark);
+    if (n === l) rect(g, cx, ly + 6, 3, 1, P.glow);
+  }
+  textRight(g, leverLabel(l), x + 73, ly, l === EB ? P.red : P.white);
+  const ey = y + 28;
+  drawText(g, 'ENG', x + 4, ey, P.grayLight);
+  drawText(g, E === 'OFF' ? 'OFF' : E === 'ON' ? 'ON' : E === 'CRANK' ? 'START' : 'STOP', x + 20, ey,
+           E === 'OFF' ? P.red : E === 'ON' ? P.grassLight : blink ? P.amber : P.peach);
+  rect(g, x + 44, ey, 29, 5, P.navy);
+  rect(g, x + 44, ey, Math.round(29 * drive.rpm), 5, drive.rpm > 0.85 ? P.orange : P.green);
+  drawText(g, 'PAX ' + drive.pax, x + 4, y + 36, P.white);
+  textRight(g, 'LAMP', x + 73, y + 36, drive.headlight && E !== 'OFF' ? P.glow : P.grayDark);
+
+  // right: score, clock and timetable, the next stop, comfort
+  x = W - 78;
+  hudBox(g, x, y, 76, 44);
+  const S = drive.pts, score = String(Math.round(S.stops + S.time + S.pax + S.penalty));
+  drawText(g, 'SCORE', x + 4, y + 4, P.grayLight);
+  textRight(g, score, x + 72, y + 4, P.glow);
+  const stopped = sim.state === 'STOPPED', i = stopped ? sim.station : Math.min(LAST_STATION, sim.station + 1);
+  const leaving = stopped && i < LAST_STATION, dueT = leaving ? SCHEDULE[i].dep : SCHEDULE[i].arr;
+  drawText(g, hhmm(sim.hour), x + 4, y + 12, P.white);
+  textRight(g, (leaving ? 'DEP ' : 'ARR ') + hhmm(tripHour(dueT)), x + 72, y + 12,
+            drive.tripT > dueT && !(stopped && !leaving) ? P.red : P.grayLight);
+  const st = STATIONS[sim.station + 1];
+  if (stopped) {
+    drawText(g, 'AT ' + STATIONS[sim.station].code, x + 4, y + 20, P.white);
+    textRight(g, st ? 'NEXT ' + st.code : 'TERMINUS', x + 72, y + 20, P.grayLight);
+  } else if (st) {
+    const togo = st.dist - sim.dist;
+    drawText(g, st.code, x + 4, y + 20, P.white);
+    textRight(g, togo > 400 ? (togo / CONFIG.PX_PER_KM).toFixed(1) + ' KM' : 'STOP ' + Math.round(togo) + ' M', x + 72, y + 20,
+              togo > 400 ? P.white : P.glow);
+  }
+  if (!stopped && st && st.dist - sim.dist < 400) {      // stop gauge: the window, the mark, the train
+    const w = stopWindow(st), o = sim.dist - st.dist, bx = x + 4, bw = 68;
+    const at = u => bx + Math.round((Math.max(-160, Math.min(80, u)) + 160) / 240 * (bw - 1));
+    rect(g, bx, y + 29, bw, 3, P.navy);
+    rect(g, at(w[0]), y + 29, at(w[1]) - at(w[0]) + 1, 3, P.greenDark);
+    rect(g, at(0), y + 28, 1, 5, P.white);
+    rect(g, at(o) - 1, y + 28, 3, 5, P.glow);
+  } else {
+    const ahead = speedLimitAt(sim.dist + 320);
+    if (!stopped && ahead < drive.limit) drawText(g, 'LIMIT ' + ahead + ' AHEAD', x + 4, y + 28, blink ? P.amber : P.peach);
+    else drawText(g, 'LIMIT ' + drive.limit, x + 4, y + 28, P.grayLight);
+  }
+  const cf = Math.round(drive.comfort);
+  drawText(g, 'COMFORT', x + 4, y + 36, P.grayLight);
+  textRight(g, cf + '%', x + 72, y + 36, cf > 80 ? P.grassLight : cf > 50 ? P.amber : P.red);
+}
+
+function drawHint(g) {
+  const s = driveHint();
+  if (!s) return;
+  const w = textWidth(s) + 8, x = (W - w) >> 1, y = 20;
+  hudBox(g, x, y, w, 11);
+  drawText(g, s, x + 4, y + 3, PALETTE.glow);
+}
+
+function drawToasts(g) {
+  const b = bannerCache[ui.bannerSt];                   // under the HUD, or under the banner while it shows
+  let y = b && ui.bannerY > -b.height ? Math.max(50, Math.round(ui.bannerY) + b.height + 3) : 50;
+  for (let i = toasts.length - 1; i >= 0; i--) {
+    const t = toasts[i], h = t.big ? 16 : 11, w = (t.big ? t.text.length * 8 - 2 : textWidth(t.text)) + 10, x = (W - w) >> 1;
+    const yy = y - Math.round(Math.max(0, 1 - t.t / 0.15) * 6);      // pops in from above
+    g.globalAlpha = Math.max(0, Math.min(1, (TOAST_LIFE - t.t) / 0.4));
+    hudBox(g, x, yy, w, h);
+    (t.big ? drawText2x : drawText)(g, t.text, x + 5, yy + 3, PALETTE[t.col]);
+    g.globalAlpha = 1;
+    y += h + 2;
+  }
+}
+
+function drawPopups(g) {
+  for (let i = 0; i < popPool.n; i++) {
+    const q = popPool.items[i], x = q.x - (textWidth(q.text) >> 1), y = Math.round(q.y - q.t * 12);
+    drawText(g, q.text, x + 1, y + 1, PALETTE.ink);
+    drawText(g, q.text, x, y, PALETTE[q.col]);
+  }
+}
+
+function drawPaused(g) {
+  const s = 'PAUSED', w = s.length * 8 + 8, x = (W - w) >> 1;
+  hudBox(g, x, 84, w, 16);
+  drawText2x(g, s, x + 5, 87, PALETTE.white);
 }
 
 function landLabel() {
@@ -3601,9 +4293,11 @@ function drawDebug(g) {
     'TIME  ' + hhmm(sim.hour) + ' ' + TIME_MODES[ui.timeMode][0] + (weather.level > 0.05 ? ' RAIN ' + Math.round(weather.level * 100) : ''),
     'LAND  ' + landLabel() + (sim.onBridge ? ' BRIDGE' : ''),
   ];
+  if (drive.on) lines.push('DRIVE ' + drive.engine + ' ' + leverLabel(drive.lever) + ' RPM ' + Math.round(drive.rpm * 100) +
+                           ' A ' + drive.accel.toFixed(1), 'TRIP ' + Math.round(drive.tripT) + ' S  OFFSET ' + Math.round(sim.dist - (STATIONS[sim.station + 1] || STATIONS[sim.station]).dist));
   if (timeScale() !== 1) lines.push(ui.paused ? 'PAUSED' : 'SPEED X' + timeScale());
   if (quality.low) lines.push('LOW QUALITY ' + quality.ema.toFixed(1) + ' MS');
-  lines.push('P PAUSE  N NEXT  T TIME  W RAIN', 'M SOUND  1/2/4 SPEED  R RESTART');
+  lines.push('P PAUSE  N NEXT  T TIME  W RAIN  C DRIVE', 'M SOUND  1/2/4 SPEED  R RESTART');
   const w = Math.max(...lines.map(textWidth)) + 6, h = lines.length * 7 + 4;
   rect(g, 2, 2, w, h, PALETTE.slate);
   rect(g, 3, 3, w - 2, h - 2, PALETTE.ink);
@@ -3618,7 +4312,9 @@ function drawDebug(g) {
 // through filters whose gains follow the scene; one-shots (rail joints,
 // horn, thunder) are scheduled ahead on the audio clock.
 const audio = { ctx: null, muted: false, master: null, noise: null, unlockedAt: 0, bedT: 0,
-                rumble: null, metal: null, boom: null, murmur: null, rain: null, patter: null };
+                rumble: null, metal: null, boom: null, murmur: null, rain: null, patter: null,
+                engine: null, engOsc: null, engSub: null, engLfo: null, squeal: null,
+                horn: null, hornT0: 0 };                // horn: the voice held down in DRIVE
 const JOINT_PX = 96;                                    // one rail length between joints
 const AXLES = [0, 8, 30, 38];                           // a carriage's two bogies: clickety ... clack
 const HORN_TONES = [311.1, 370.0];                      // E-flat and F-sharp: the two-tone chord of a diesel air horn
@@ -3663,6 +4359,23 @@ function buildAudioGraph() {
   // rain: hiss plus a brighter patter
   audio.rain = gain(0); chain([loop(), filt('highpass', 1200), filt('lowpass', 7500), audio.rain, audio.master]);
   audio.patter = gain(0); chain([loop(), filt('bandpass', 3800, 1.5), audio.patter, audio.master]);
+  // diesel engine: a low sawtooth, a sub-octave square and some clatter, all
+  // pulsing with the firing strokes; pitch and loudness follow the revs
+  audio.engine = gain(0);
+  const fire = gain(0.6), osc = type => { const o = ac.createOscillator(); o.type = type; o.start(); return o; };
+  audio.engOsc = osc('sawtooth'); audio.engSub = osc('square'); audio.engLfo = osc('sine');
+  chain([audio.engOsc, filt('lowpass', 300), fire]);
+  chain([audio.engSub, filt('lowpass', 150), gain(0.5), fire]);
+  chain([loop(), filt('bandpass', 190, 1.4), gain(1.2), fire]);
+  const beat = gain(0.4);
+  audio.engLfo.connect(beat); beat.connect(fire.gain);
+  chain([fire, audio.engine, audio.master]);
+  // brake squeal in the last metres before a stop
+  audio.squeal = gain(0);
+  const sq = osc('sine');
+  sq.frequency.value = 3150;
+  lfo(6.5, 40, sq.frequency);
+  chain([sq, audio.squeal, audio.master]);
 }
 
 function setMuted(m) {
@@ -3685,6 +4398,12 @@ function updateAudioBeds(dt) {
   set(audio.murmur, near * 0.09);
   set(audio.rain, weather.level * 0.16 * run);
   set(audio.patter, weather.level * 0.05 * run);
+  const rpm = drive.rpm, f = 24 + rpm * 52;
+  audio.engOsc.frequency.setTargetAtTime(f, now, 0.2);
+  audio.engSub.frequency.setTargetAtTime(f / 2, now, 0.2);
+  audio.engLfo.frequency.setTargetAtTime(f / 5, now, 0.2);
+  set(audio.engine, rpm > 0.02 ? (0.05 + 0.09 * rpm) * (drive.on ? 1 : 0.55) * run : 0);
+  set(audio.squeal, squealLevel() * 0.02 * run);
 }
 
 // Rail joints: every JOINT_PX of travel, the four axles of a carriage click
@@ -3727,16 +4446,17 @@ function playHorn(short) {
   else hornBlast(t0, 1.3);
 }
 
-function hornBlast(t0, dur) {
+function hornBlast(t0, dur) { hornRelease(hornVoice(t0), t0 + dur - 0.15); }
+
+// One horn voice, sounding from t0 until hornRelease()
+function hornVoice(t0) {
   const ac = audio.ctx, out = ac.createGain(), lp = ac.createBiquadFilter(), pk = ac.createBiquadFilter();
   lp.type = 'lowpass'; lp.frequency.value = 2400;
   pk.type = 'peaking'; pk.frequency.value = 900; pk.gain.value = 6;
   out.gain.setValueAtTime(0, t0);
   out.gain.linearRampToValueAtTime(0.09, t0 + 0.07);
-  out.gain.setValueAtTime(0.09, t0 + dur - 0.15);
-  out.gain.linearRampToValueAtTime(0, t0 + dur);
   lp.connect(pk); pk.connect(out); out.connect(audio.master);
-  const vib = ac.createOscillator(), vg = ac.createGain();
+  const vib = ac.createOscillator(), vg = ac.createGain(), oscs = [vib];
   vib.frequency.value = 5.5; vg.gain.value = 2.5; vib.connect(vg);
   for (const f of HORN_TONES)
     for (const det of [-7, 0, 6]) {
@@ -3747,9 +4467,97 @@ function hornBlast(t0, dur) {
       o.frequency.exponentialRampToValueAtTime(f, t0 + 0.09);
       vg.connect(o.frequency);
       o.connect(lp);
-      o.start(t0); o.stop(t0 + dur + 0.05);
+      oscs.push(o);
     }
-  vib.start(t0); vib.stop(t0 + dur + 0.05);
+  for (const o of oscs) o.start(t0);
+  return { out, oscs };
+}
+function hornRelease(h, t) {
+  h.out.gain.setValueAtTime(0.09, t);
+  h.out.gain.linearRampToValueAtTime(0, t + 0.15);
+  for (const o of h.oscs) o.stop(t + 0.2);
+}
+
+// DRIVE: the horn sounds for as long as it is held (at least a short toot)
+function hornOn() {
+  if (drive.horn) return;
+  drive.horn = true;
+  sim.hornWave = 99;
+  if (!audioOn()) return;
+  audio.hornT0 = audio.ctx.currentTime + 0.01;
+  audio.horn = hornVoice(audio.hornT0);
+}
+function hornOff() {
+  if (!drive.horn) return;
+  drive.horn = false;
+  sim.hornWave = Math.min(sim.hornWave, 0.3);
+  if (!audio.horn) return;
+  hornRelease(audio.horn, Math.max(audio.ctx.currentTime, audio.hornT0 + 0.3));
+  audio.horn = null;
+}
+
+// --- DRIVE sound effects: all short, synthesised one-shots ------------------
+function noiseHit(t, dur, type, freq, q, vol) {
+  const ac = audio.ctx, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = audio.noise; src.loop = true;
+  f.type = type; f.frequency.value = freq; if (q) f.Q.value = q;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + Math.min(0.03, dur * 0.2));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(audio.master);
+  src.start(t, Math.random() * 1.5); src.stop(t + dur + 0.05);
+}
+function tone(t, freq, dur, vol, type = 'sine') {
+  const ac = audio.ctx, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(audio.master);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+
+// Starter motor: a rising whine and the engine turning over, faster and faster
+function playCrank() {
+  if (!audioOn()) return;
+  const ac = audio.ctx, t = ac.currentTime + 0.02, dur = CONFIG.DRIVE.CRANK_TIME;
+  const o = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(70, t);
+  o.frequency.exponentialRampToValueAtTime(240, t + dur * 0.7);
+  lp.type = 'lowpass'; lp.frequency.value = 900;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.025, t + 0.15);
+  g.gain.setValueAtTime(0.025, t + dur - 0.2);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(lp); lp.connect(g); g.connect(audio.master);
+  o.start(t); o.stop(t + dur + 0.05);
+  for (let k = 0, tp = t + 0.1; tp < t + dur - 0.05; k++, tp += Math.max(0.09, 0.22 - k * 0.012))
+    noiseHit(tp, 0.12, 'bandpass', 260, 1.2, 0.1 + Math.min(0.1, k * 0.008));
+}
+function playThump(v) {
+  if (!audioOn()) return;
+  const ac = audio.ctx, t = ac.currentTime + 0.01, o = ac.createOscillator(), g = ac.createGain();
+  o.frequency.setValueAtTime(80, t);
+  o.frequency.exponentialRampToValueAtTime(32, t + 0.3);
+  g.gain.setValueAtTime(v, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  o.connect(g); g.connect(audio.master);
+  o.start(t); o.stop(t + 0.45);
+  noiseHit(t, 0.25, 'lowpass', 500, 0, v * 0.6);
+}
+function playAir(dur, vol) { if (audioOn()) noiseHit(audio.ctx.currentTime + 0.01, dur, 'highpass', 2200, 0, vol); }   // pneumatics: pssssh
+function playNotch() { if (audioOn()) noiseHit(audio.ctx.currentTime + 0.005, 0.04, 'bandpass', 2600, 4, 0.12); }    // the lever clicking into a notch
+function playBeep() { if (audioOn()) tone(audio.ctx.currentTime + 0.01, 1250, 0.09, 0.035, 'square'); }               // overspeed warning
+function playChime() {                                                                                                 // doors closing
+  if (!audioOn()) return;
+  const t = audio.ctx.currentTime + 0.01;
+  tone(t, 784, 0.45, 0.06); tone(t + 0.32, 622, 0.6, 0.06);
+}
+function playScore(good) {
+  if (!audioOn()) return;
+  const t = audio.ctx.currentTime + 0.05, notes = good ? [523, 659, 784, 1047] : [523, 659, 784];
+  notes.forEach((f, i) => tone(t + i * 0.08, f, 0.3, 0.045, 'triangle'));
 }
 
 function playThunder(strength) {
@@ -3815,6 +4623,14 @@ const ICONS = {
 const btn = id => document.getElementById(id);
 
 function syncButtons() {
+  // AUTO and DRIVE each show their own set of buttons
+  const driving = drive.on && !ui.title;
+  let relayout = false;
+  for (const b of bar.children) {
+    const hide = b.classList.contains('drv') ? !driving : b.classList.contains('aut') && driving;
+    if (b.hidden !== hide) { b.hidden = hide; relayout = true; }
+  }
+  if (relayout) fit();
   const set = (id, icon, label, on, aria) => {
     const b = btn(id);
     if (icon && b.dataset.icon !== icon) { b.firstElementChild.innerHTML = icon; b.dataset.icon = icon; }
@@ -3833,10 +4649,19 @@ function syncButtons() {
   const live = audio.ctx && audio.ctx.state === 'running';
   set('b-mute', live && !audio.muted ? ICONS.sound : ICONS.mute, !live ? 'TAP' : audio.muted ? 'OFF' : 'ON', live && !audio.muted,
       !live ? 'Turn sound on' : audio.muted ? 'Unmute' : 'Mute');
+  set('b-mode', null, driving ? 'DRIVE' : 'AUTO', driving, driving ? 'Driver mode on: hand back to autopilot' : 'Drive the train yourself');
+  const E = drive.engine;
+  set('b-engine', null, E === 'OFF' ? 'START' : E === 'ON' ? 'STOP' : '...', E === 'ON', E === 'OFF' ? 'Start the engine' : 'Stop the engine');
+  set('b-power', null, null, drive.lever > 0, 'Power up, lever ' + leverLabel(drive.lever));
+  set('b-brake', null, null, drive.lever < 0, 'Brake, lever ' + leverLabel(drive.lever));
+  const closing = sim.state === 'STOPPED' && (sim.stopPhase === 'BOARDING' || sim.stopPhase === 'BOARDED' || sim.stopPhase === 'DOORS_OPEN');
+  set('b-doors', null, closing ? 'CLOSE' : 'OPEN', sim.doorOpen > 0, closing ? 'Close the doors' : 'Open the doors');
+  set('b-light', null, null, drive.headlight, drive.headlight ? 'Headlight off' : 'Headlight on');
 }
 
 const actions = {
-  pause() { ui.paused = !ui.paused; },
+  mode() { if (ui.title) beginTrip(true); else setDriveMode(!drive.on); },
+  pause() { ui.paused = !ui.paused; if (ui.paused) hornOff(); },
   speed() { ui.speed = SPEEDS[(SPEEDS.indexOf(ui.speed) + 1) % SPEEDS.length]; },
   skip() { skipToNextStation(); },
   time() { ui.timeMode = (ui.timeMode + 1) % TIME_MODES.length; },
@@ -3846,38 +4671,93 @@ const actions = {
     if (performance.now() - audio.unlockedAt < 700) { setMuted(false); return; }
     setMuted(!audio.muted);
   },
+  engine() { toggleEngine(); },
+  power() { setLever(drive.lever + 1); },
+  brake() { setLever(drive.lever - 1); },
+  doors() { toggleDoors(); },
+  light() { toggleLight(); },
 };
-for (const [id, act] of [['b-pause', 'pause'], ['b-speed', 'speed'], ['b-skip', 'skip'], ['b-time', 'time'], ['b-rain', 'rain'], ['b-mute', 'mute']])
+for (const [id, act] of [['b-mode', 'mode'], ['b-pause', 'pause'], ['b-speed', 'speed'], ['b-skip', 'skip'], ['b-time', 'time'],
+                         ['b-rain', 'rain'], ['b-mute', 'mute'], ['b-engine', 'engine'], ['b-doors', 'doors'], ['b-light', 'light']])
   btn(id).addEventListener('click', () => { unlockAudio(); actions[act](); syncButtons(); });
 
+// Power and brake step once per tap and keep stepping while held; the horn
+// sounds while held. A click with no pointer (keyboard on the button) taps.
+let holdTimer = 0;
+const endHold = () => { clearTimeout(holdTimer); holdTimer = 0; };
+for (const [id, act] of [['b-power', 'power'], ['b-brake', 'brake']]) {
+  const b = btn(id), step = () => { actions[act](); syncButtons(); };
+  b.addEventListener('pointerdown', e => {
+    unlockAudio(); step(); endHold();
+    const again = () => { step(); holdTimer = setTimeout(again, 170); };
+    holdTimer = setTimeout(again, 420);
+    e.preventDefault();
+  });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, endHold);
+  b.addEventListener('click', e => { if (e.detail === 0) step(); });
+}
+{
+  const b = btn('b-horn');
+  b.addEventListener('pointerdown', e => { unlockAudio(); hornOn(); e.preventDefault(); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, hornOff);
+  b.addEventListener('click', e => { if (e.detail === 0) { hornOn(); setTimeout(hornOff, 400); } });
+}
+
 function skipToNextStation() {
-  if (ui.complete || sim.station >= LAST_STATION) return;
-  sim.station++;
-  sim.dist = STATIONS[sim.station].dist;
+  if (ui.complete || sim.station >= LAST_STATION || drive.on) return;
   sim.doorOpen = 0;
   smokePool.n = sparkPool.n = 0;
-  setState('STOPPED');
+  arrive(sim.station + 1, 0);
 }
 
 const timeScale = () => (ui.paused ? 0 : ui.speed) * (input.fast ? CONFIG.FAST_FACTOR : 1);
 
+// Keys on the title card, and the driver's keys; true when the key was used
+function titleKey(key) {
+  if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Tab') ui.titleSel ^= 1;
+  else if (key === 'Enter' || key === 'Space') beginTrip(ui.titleSel === 1);
+  else if (key === 'KeyC') beginTrip(true);
+  else return false;
+  return true;
+}
+function driveKey(key) {
+  if (ui.complete) return false;
+  switch (key) {
+    case 'KeyE': toggleEngine(); break;
+    case 'ArrowUp': setLever(drive.lever + 1); break;
+    case 'ArrowDown': setLever(drive.lever - 1); break;
+    case 'KeyB': setLever(EB); break;
+    case 'KeyO': toggleDoors(); break;
+    case 'KeyL': toggleLight(); break;
+    case 'KeyH': break;                                  // held: see keydown
+    default: return false;
+  }
+  return true;
+}
+
 addEventListener('keydown', e => {
   unlockAudio();
-  if (e.code === 'KeyF') input.fast = true;
-  if (e.repeat) return;
   const key = e.code;
+  if (key === 'KeyF') input.fast = true;
+  if (key === 'KeyH' && drive.on && !ui.title && !ui.paused) hornOn();
+  if (e.repeat) { if (key === 'Space' || key.startsWith('Arrow')) e.preventDefault(); return; }
+  if ((ui.title && titleKey(key)) || (drive.on && !ui.title && driveKey(key))) { e.preventDefault(); syncButtons(); return; }
   if (key === 'KeyD') input.debug = !input.debug;
+  else if (key === 'KeyC') actions.mode();
   else if (key === 'KeyT') actions.time();
   else if (key === 'KeyM') setMuted(!audio.muted);
   else if (key === 'KeyW') actions.rain();
   else if (key === 'KeyN') actions.skip();
   else if (key === 'KeyP' || (key === 'Space' && !ui.complete)) { actions.pause(); e.preventDefault(); }
-  else if (key === 'Digit1' || key === 'Digit2' || key === 'Digit4') ui.speed = +key.slice(5);
+  else if (!drive.on && (key === 'Digit1' || key === 'Digit2' || key === 'Digit4')) ui.speed = +key.slice(5);
   else if (key === 'KeyR' || (ui.complete && (key === 'Enter' || key === 'Space'))) startJourney();
   syncButtons();
 });
-addEventListener('keyup', e => { if (e.code === 'KeyF') input.fast = false; });
-addEventListener('blur', () => { input.fast = false; });
+addEventListener('keyup', e => {
+  if (e.code === 'KeyF') input.fast = false;
+  if (e.code === 'KeyH') hornOff();
+});
+addEventListener('blur', () => { input.fast = false; hornOff(); endHold(); });
 addEventListener('pointerdown', unlockAudio);
 
 function toInternal(e) {
@@ -3885,13 +4765,16 @@ function toInternal(e) {
   return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height];
 }
 canvas.addEventListener('pointermove', e => {
-  const [x, y] = toInternal(e);
+  const [x, y] = toInternal(e), t = ui.title ? titleHit(x, y) : -1;
+  if (t >= 0) ui.titleSel = t;
   ui.hover = buttonHit(x, y);
-  canvas.style.cursor = ui.hover ? 'pointer' : 'default';
+  canvas.style.cursor = ui.hover || t >= 0 ? 'pointer' : 'default';
 });
 canvas.addEventListener('pointerdown', e => {
-  const [x, y] = toInternal(e);
-  if (buttonHit(x, y)) { startJourney(); ui.hover = false; canvas.style.cursor = 'default'; }
+  const [x, y] = toInternal(e), t = ui.title ? titleHit(x, y) : -1;
+  if (t >= 0) { beginTrip(t === 1); canvas.style.cursor = 'default'; }
+  else if (buttonHit(x, y)) { startJourney(); ui.hover = false; canvas.style.cursor = 'default'; }
+  syncButtons();
 });
 
 // =====================================================================
@@ -3913,6 +4796,7 @@ for (let level = 0; level <= 16; level++) {
 }
 
 buildTerrain();
+buildSchedule();
 const VARIANTS = { day: buildVariant('day'), dusk: buildVariant('dusk'), night: buildVariant('night') };
 
 // Everything that belongs to the landscape and lighting variant v. The sky
@@ -3964,11 +4848,17 @@ function render() {
   applyTint(ctx);                                                        // 7. time-of-day colour
   drawGlow(ctx);                                                         // 8. lamps, windows, sparks
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const driving = drive.on && !ui.title;
   ui.debugW = 0;
-  if (input.debug) drawDebug(ctx);
+  if (driving) drawPopups(ctx);
   drawMap(ctx);
+  if (driving) { drawDriveHUD(ctx); drawHint(ctx); }
+  if (input.debug) drawDebug(ctx);
   drawBanner(ctx);
+  if (driving) drawToasts(ctx);
   drawPanel(ctx);
+  if (ui.title) drawTitle(ctx);
+  else if (driving && ui.paused) drawPaused(ctx);
 }
 
 // Paint terrain chunks (and the sprites standing on them) a little before
@@ -3999,15 +4889,19 @@ function warmChunk(v, L, k) {
 }
 
 // --- layout: canvas and toolbar share the screen --------------------------
-// Portrait: toolbar under the picture. Wide screens: toolbar beside it.
-// If neither leaves room, the toolbar floats over the bottom of the picture.
+// Portrait: toolbar under the picture (in two rows if it must). Wide
+// screens: toolbar beside it. If neither leaves room, the toolbar floats
+// over the bottom of the picture.
 const bar = document.getElementById('bar');
 function fit() {
   const cs = getComputedStyle(document.body);
   const aw = innerWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const ah = innerHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const B = 48, GAP = 8, n = bar.children.length, along = n * B + (n - 1) * 6;
-  const below = along <= aw ? Math.min(aw / W, (ah - B - GAP) / H) : 0;
+  let n = 0;
+  for (const b of bar.children) if (!b.hidden) n++;
+  const B = 48, GAP = 8, along = n * B + (n - 1) * 6;
+  const rows = Math.ceil(n / Math.max(1, Math.floor((aw + 6) / (B + 6)))), tall = rows * B + (rows - 1) * 6;
+  const below = rows <= 2 ? Math.min(aw / W, (ah - tall - GAP) / H) : 0;
   const side = along <= ah ? Math.min((aw - B - GAP) / W, ah / H) : 0;
   const over = Math.min(aw / W, ah / H);
   let mode = side >= below ? 'side' : 'below', s = Math.max(side, below);
@@ -4036,6 +4930,7 @@ function frame(now) {
   updateHour(dt);                                       // also eases while paused (time button)
   updateShake(steps ? dt : 0);
   updateAudioBeds(dt);
+  updateToasts(dt);                                     // real time, so they fade while paused too
   render();
   prefetchTerrain();
   // phones and slow machines: drop to the light particle budgets
@@ -4045,6 +4940,8 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 startJourney();
+// A link ending in #watch or #drive skips the title card
+if (location.hash === '#watch' || location.hash === '#drive') beginTrip(location.hash === '#drive');
 syncButtons();
 requestAnimationFrame(now => { last = now; render(); requestAnimationFrame(frame); });
 </script>
