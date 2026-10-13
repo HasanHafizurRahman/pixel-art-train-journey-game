@@ -51,6 +51,7 @@
 <div id="bar" role="toolbar" aria-label="Train controls">
   <button id="b-mode" type="button" aria-label="Driver mode" title="Drive the train yourself (C)"><svg viewBox="0 0 16 16"><path d="M5 2h6v1h2v2h1v6h-1v2h-2v1H5v-1H3v-2H2V5h1V3h2zM6 4H5v1H4v6h1v1h6v-1h1V5h-1V4zM7 4h2v3H7zM7 7h2v2H7zM4 7h3v1H4zM9 7h3v1H9zM7 9h2v3H7z"/></svg><span>AUTO</span></button>
   <button id="b-engine" type="button" class="drv" hidden aria-label="Start the engine" title="Engine start / stop (E)"><svg viewBox="0 0 16 16"><path d="M7 1h2v7H7zM4 3h2v2H4zM10 3h2v2h-2zM2 5h2v6H2zM12 5h2v6h-2zM3 11h2v2H3zM11 11h2v2h-2zM5 13h6v1H5z"/></svg><span>START</span></button>
+  <button id="b-rev" type="button" class="drv" hidden aria-label="Reverser" title="Reverse / Forward (R)"><svg viewBox="0 0 16 16"><path d="M5 2L2 5l3 3V6h6V4H5V2zM11 14l3-3-3-3v2H5v2h6v2z"/></svg><span>FWD</span></button>
   <button id="b-power" type="button" class="drv" hidden aria-label="Power: notch up" title="Power up / release brake (Up arrow)"><svg viewBox="0 0 16 16"><path d="M7 3h2v1h1v1h1v1h1v1h1v1h1v2H2V8h1V7h1V6h1V5h1V4h1z"/></svg><span>POWER</span></button>
   <button id="b-brake" type="button" class="drv" hidden aria-label="Brake: notch down" title="Power down / brake (Down arrow, B = emergency)"><svg viewBox="0 0 16 16"><path d="M2 5h12v2h-1v1h-1v1h-1v1h-1v1H9v1H7v-1H6v-1H5V9H4V8H3V7H2z"/></svg><span>BRAKE</span></button>
   <button id="b-doors" type="button" class="drv" hidden aria-label="Open the doors" title="Doors (O)"><svg viewBox="0 0 16 16"><path d="M2 2h12v12H2zM4 4v10h3V4zM9 4v10h3V4z"/></svg><span>OPEN</span></button>
@@ -94,6 +95,7 @@ const CONFIG = {
   DRIVE: {
     NOTCHES: 8, BRAKES: 4,
     ACCEL: 15, KNEE: 45,                // px/s² at full power; tractive effort fades above KNEE px/s
+    REV_SPEED: 18,                      // px/s max reverse speed (slow shunting crawl)
     DRAG: [0.5, 0.00035],               // rolling + air resistance: c0 + c1 * v²
     BRAKE: 4.5, EMERGENCY: 28,          // px/s² per brake step, emergency brake
     CRANK_TIME: 2.2, SHUTDOWN_TIME: 2.5,
@@ -137,18 +139,20 @@ const CONFIG = {
 //             landscape along the line itself comes from TERRAIN below)
 //   extras    station-specific props / characters ('porter', 'fish', 'chests')
 const ROUTE = [
-  { en: 'KAMALAPUR', bn: 'কমলাপুর', code: 'DHK', km: 0,
+  { en: 'KAMALAPUR', bn: 'কমলাপুর', code: 'DHK', km: 0, dist: 0,
     platform: [-330, 650], roof: 'umbrella', crowd: 15, alight: 0, idle: 14,
     backdrop: ['city'], extras: ['porter'] },
-  { en: 'BHAIRAB BAZAR', bn: 'ভৈরব বাজার', code: 'BRB', km: 82,
+  { en: 'BHAIRAB BAZAR', bn: 'ভৈরব বাজার', code: 'BRB', km: 82, dist: 1640,
     platform: [-90, 400], roof: 'canopy', roofColor: 'red', crowd: 6, alight: 4, idle: 4,
     extras: ['fish'] },
-  { en: 'SRIMANGAL', bn: 'শ্রীমঙ্গল', code: 'SMG', km: 234,
-    platform: [4, 318], roof: 'shelter', crowd: 2, alight: 2, idle: 1 },
-  { en: 'KULAURA JN.', bn: 'কুলাউড়া জংশন', code: 'KUL', km: 272,
+  { en: 'B.BARIA', bn: 'বি.বাড়িয়া', code: 'BBA', km: 100, dist: 3500,
+    platform: [-70, 380], roof: 'canopy', roofColor: 'green', crowd: 5, alight: 3, idle: 3 },
+  { en: 'SRIMANGAL', bn: 'শ্রীমঙ্গল', code: 'SMG', km: 234, dist: 6200,
+    platform: [4, 318], roof: 'shelter', crowd: 4, alight: 3, idle: 2 },
+  { en: 'KULAURA JN.', bn: 'কুলাউড়া জংশন', code: 'KUL', km: 272, dist: 9000,
     roof: 'canopy', roofColor: 'blue', crowd: 5, alight: 3, idle: 3,
     extras: ['chests'] },                                  // tea chests from the gardens around
-  { en: 'SYLHET', bn: 'সিলেট', code: 'SYL', km: 319,
+  { en: 'SYLHET', bn: 'সিলেট', code: 'SYL', km: 319, dist: 12000,
     platform: [-60, 380], roof: 'canopy', crowd: 0, alight: 12, idle: 2 },
 ];
 const STATION_DEFAULTS = { platform: [-40, 360], roof: 'canopy', roofColor: 'green',
@@ -161,9 +165,9 @@ const STATION_DEFAULTS = { platform: [-40, 360], roof: 'canopy', roofColor: 'gre
 const TERRAIN = [
   { id: 'village' },                      // Kamalapur onwards: paddy, ponds, tin roofs
   { id: 'river', at: [1, -260] },         // the Meghna at Bhairab, and the bridge
-  { id: 'kash',  at: [1, 1640] },         // sandy chars white with kash phool
-  { id: 'tea',   at: [2, -420] },         // Srimangal and Kulaura tea gardens
-  { id: 'hills', at: [3, 200] },          // misty hills on the approach to Sylhet
+  { id: 'kash',  at: [1, 1400] },         // sandy chars white with kash phool
+  { id: 'tea',   at: [3, -420] },         // Srimangal and Kulaura tea gardens
+  { id: 'hills', at: [4, 400] },          // misty hills on the approach to Sylhet
 ];
 // Steel truss railway bridge over the Meghna, just past Bhairab Bazar
 const BRIDGE = { at: [1, 600], spans: 6, span: 120 };
@@ -573,7 +577,7 @@ function drawBogie(g, p, a, b) {
 
 // Body bounce relative to the bogies: -1, 0 or +1 px, only while moving
 function swayOffset(i) {
-  const k = Math.min(1, sim.speed / CONFIG.CRUISE_SPEED);
+  const k = Math.min(1, Math.abs(sim.speed) / CONFIG.CRUISE_SPEED);
   if (k < 0.05) return 0;
   const s = (Math.sin(sim.swayPhase + i * 2.1) + 0.6 * Math.sin(sim.swayPhase * 2.3 + i * 1.3)) * k;
   return s > 1.05 ? -1 : s < -1.3 ? 1 : 0;
@@ -581,7 +585,9 @@ function swayOffset(i) {
 
 function drawTrain(g, v) {
   const p = v.p, vehicles = TRAIN.vehicles;
-  const wf = v.wheels[Math.floor(sim.wheelAngle / (Math.PI / 2) * CONFIG.WHEEL_FRAMES) % CONFIG.WHEEL_FRAMES];
+  const totalFrames = CONFIG.WHEEL_FRAMES;
+  const frameIdx = ((Math.floor(sim.wheelAngle / (Math.PI / 2) * totalFrames) % totalFrames) + totalFrames) % totalFrames;
+  const wf = v.wheels[frameIdx] || v.wheels[0];
   // couplings (behind bodies): gangway bellows between carriages + coupler
   for (let i = 0; i < vehicles.length - 1; i++) {
     const gx = vehicles[i + 1].x + vehicles[i + 1].w;
@@ -660,7 +666,7 @@ function updateSmoke(dt) {
     s.vy += (-5 - s.vy) * ky;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    if (s.age < s.life && s.x > -16 && s.y > -16) i++;
+    if (s.age < s.life && s.x > -16 && s.x < W + 32 && s.y > -16) i++;
     else poolKill(smokePool, i);
   }
 }
@@ -2203,7 +2209,7 @@ function updateFluff(dt) {
     f.vx += (-(sim.speed * f.depth) - 6 - f.vx) * Math.min(1, dt * 1.5);
     f.x += f.vx * dt;
     f.y += (-3 + Math.sin(f.age * 1.7 + f.ph) * 7) * dt;
-    if (f.age < f.life && f.x > -4 && f.y > -4) i++;
+    if (f.age < f.life && f.x > -4 && f.x < W + 32 && f.y > -4) i++;
     else poolKill(fluffPool, i);
   }
 }
@@ -2249,7 +2255,7 @@ const BOARD_TOP = 93;
 
 const STATIONS = ROUTE.map((r, index) => {
   const st = { ...STATION_DEFAULTS, ...r, index };
-  st.dist = Math.round(st.km * CONFIG.PX_PER_KM);
+  st.dist = r.dist != null ? r.dist : Math.round(st.km * CONFIG.PX_PER_KM);
   st.bnMask = textMask(st.bn, CONFIG.BN_SIZE);
   st.layout = layoutStation(st);
   return st;
@@ -2960,7 +2966,7 @@ const sim = {
   wheelAngle: 0, swayPhase: 0, clock: 0, cloudDrift: 0,
   hour: CONFIG.HOUR_START, night: 1,       // time of day (0..24) and how dark it is (0..1)
   smokeAcc: 0, fluffAcc: 0, flyAcc: 0, sparkAcc: 0,
-  people: [], populated: new Set(),
+  people: [], populated: new Set(), missedStations: new Set(),
   fxRng: null, wxRng: null,                // seeded: same birds, fluff and weather every trip
   onBridge: false, bridgeMix: 0,           // see updateBridge(); drives the bridge rumble
   shake: 0, hornWave: 0, hornTimer: 8, jointAcc: 0,
@@ -3115,6 +3121,7 @@ const drive = {
   on: false,                               // DRIVE mode; AUTO when false
   engine: 'OFF', engineT: 0, rpm: 0,       // OFF | CRANK | ON | SHUTDOWN; rpm 0..1 (0.3 = idle)
   lever: 0, accel: 0,                      // lever: -5 emergency, -4..-1 brake, 0 coast, 1..8 power
+  reverser: 1,                             // 1: FORWARD, -1: REVERSE (SLOW)
   headlight: true, horn: false,
   tripT: 0,                                // s since the trip began: the timetable clock
   limit: CONFIG.DRIVE.LIMIT, over: false, beepT: 0,
@@ -3122,7 +3129,7 @@ const drive = {
   final: null,                             // the score card once the trip is complete
 };
 const EB = -CONFIG.DRIVE.BRAKES - 1;       // the emergency brake position
-const leverLabel = n => n > 0 ? 'P' + n : n === EB ? 'EB' : n < 0 ? 'B' + -n : 'N';
+const leverLabel = n => drive.reverser === -1 && n > 0 ? 'R' + n : n > 0 ? 'P' + n : n === EB ? 'EB' : n < 0 ? 'B' + -n : 'N';
 
 // Timetable: each leg run a little under the line speed, plus time to get
 // going and to stop, plus some slack; a dwell at each stop. Built once the
@@ -3171,6 +3178,8 @@ function resetDrive() {
   P.stops = P.time = P.pax = P.penalty = 0;
   drive.comfort = 100; drive.pax = 0; drive.final = null; drive.tripT = 0;
   drive.lever = 0; drive.over = false;
+  drive.reverser = 1;
+  sim.missedStations = new Set();
   toasts.length = 0; popPool.n = 0;
   hornOff();
   if (drive.on) { setEngine('OFF'); drive.rpm = 0; setStopPhase('READY'); }
@@ -3194,10 +3203,10 @@ function setDriveMode(on) {
     if (drive.engine === 'OFF' || drive.engine === 'SHUTDOWN') startEngine();
     if (sim.state === 'DRIVING') {
       const st = STATIONS[sim.station + 1], o = st ? sim.dist - st.dist : 0, w = st && stopWindow(st);
-      if (st && (sim.speed < 1 || st.index === LAST_STATION) && o >= w[0] && o <= w[1]) {
+      if (st && (Math.abs(sim.speed) < 1 || st.index === LAST_STATION) && o >= w[0] && o <= w[1]) {
         arrive(st.index, o);                             // standing at (or rolling into) the platform
       } else {
-        if (st && o > 0) missStation(false);             // already past the mark: on to the next stop
+        if (st && o > 0 && o > w[1] + 100) missStation(false);             // already past the mark: on to the next stop
         setState(sim.speed > 1 ? 'TRAVELING' : 'DEPARTING');
       }
     }
@@ -3275,6 +3284,18 @@ function toggleLight() {
   toast(drive.headlight ? 'HEADLIGHT ON' : 'HEADLIGHT OFF', 'white');
 }
 
+function toggleReverser() {
+  if (ui.complete) return;
+  if (Math.abs(sim.speed) > 1.5) {
+    toast('STOP TRAIN BEFORE REVERSING', 'amber');
+    return;
+  }
+  drive.reverser = drive.reverser === 1 ? -1 : 1;
+  playNotch();
+  toast(drive.reverser === -1 ? 'REVERSER: REVERSE (SLOW)' : 'REVERSER: FORWARD', drive.reverser === -1 ? 'glow' : 'white');
+  syncButtons();
+}
+
 // The doors button: open them at a platform once stopped, close them after boarding
 function toggleDoors() {
   if (sim.state === 'STOPPED') {
@@ -3286,7 +3307,7 @@ function toggleDoors() {
     }
     return;
   }
-  if (sim.speed > 0.3) { toast('STOP THE TRAIN FIRST', 'amber'); return; }
+  if (Math.abs(sim.speed) > 0.3) { toast('STOP THE TRAIN FIRST', 'amber'); return; }
   const st = STATIONS[sim.station + 1];
   if (!st) return;
   const o = sim.dist - st.dist, w = stopWindow(st);
@@ -3309,17 +3330,49 @@ function updateDrive(dt) {
   drive.tripT += dt;
   if (sim.state === 'STOPPED') updateStop(dt);
   const power = drive.lever > 0 && drive.engine === 'ON' && sim.doorOpen === 0 && !ui.complete ? drive.lever / D.NOTCHES : 0;
-  const trac = Math.min(power, Math.max(0, (drive.rpm - 0.3) / 0.7)) * D.ACCEL * Math.min(1, D.KNEE / Math.max(v, 1));
-  if (sim.state === 'STOPPED') {
-    drive.accel = 0;
-    if (trac <= 0 || !depart()) return;
+  const dir = drive.reverser;
+  const revMax = D.REV_SPEED || 18;
+
+  if (dir === 1) {
+    const trac = Math.min(power, Math.max(0, (drive.rpm - 0.3) / 0.7)) * D.ACCEL * Math.min(1, D.KNEE / Math.max(v, 1));
+    if (sim.state === 'STOPPED') {
+      drive.accel = 0;
+      if (trac <= 0 || !depart()) return;
+    }
+    const brake = drive.lever === EB ? D.EMERGENCY : drive.lever < 0 ? -drive.lever * D.BRAKE : 0;
+    const resist = v > 0 ? D.DRAG[0] + D.DRAG[1] * v * v + brake : brake;
+    sim.speed = Math.max(0, v + (trac - resist) * dt);
+  } else {
+    // Reverse drive (slow shunting crawl)
+    const revTrac = v > -revMax ? Math.min(power, Math.max(0, (drive.rpm - 0.3) / 0.7)) * (D.ACCEL * 0.45) : 0;
+    if (sim.state === 'STOPPED') {
+      drive.accel = 0;
+      if (revTrac > 0) toast('SET REVERSER TO FORWARD [R]', 'amber');
+      return;
+    }
+    const brake = drive.lever === EB ? D.EMERGENCY : drive.lever < 0 ? -drive.lever * D.BRAKE : 0;
+    if (v > 0) {
+      const resist = D.DRAG[0] + D.DRAG[1] * v * v + brake + revTrac;
+      sim.speed = Math.max(0, v - resist * dt);
+    } else {
+      const resist = (D.DRAG[0] + brake) * dt;
+      let newV = v - revTrac * dt;
+      if (newV < v && newV < -revMax) newV = -revMax;
+      if (brake > 0 || power === 0) {
+        newV = Math.min(0, newV + resist);
+      }
+      sim.speed = Math.max(-revMax, Math.min(0, newV));
+    }
   }
-  const brake = drive.lever === EB ? D.EMERGENCY : drive.lever < 0 ? -drive.lever * D.BRAKE : 0;
-  const resist = v > 0 ? D.DRAG[0] + D.DRAG[1] * v * v + brake : 0;
-  sim.speed = Math.max(0, v + (trac - resist) * dt);
+
   sim.dist += (v + sim.speed) / 2 * dt;
+  if (sim.dist < STATIONS[0].dist) {
+    sim.dist = STATIONS[0].dist;
+    if (sim.speed < 0) sim.speed = 0;
+  }
+
   drive.accel = (sim.speed - v) / dt;
-  if (v > 1.5 && sim.speed === 0) sim.shake = Math.max(sim.shake, drive.lever <= -3 ? 1.2 : 0.5);   // the brakes hold
+  if (Math.abs(v) > 1.5 && sim.speed === 0) sim.shake = Math.max(sim.shake, drive.lever <= -3 ? 1.2 : 0.5);   // the brakes hold
   const harsh = Math.abs(drive.accel) - D.COMFORT_ACCEL;  // passengers thrown about
   if (harsh > 0) drive.comfort = Math.max(0, drive.comfort - harsh * dt * 1.5);
   checkSpeed(dt);
@@ -3352,10 +3405,30 @@ function checkSpeed(dt) {
 
 // Rolling past a platform without stopping, or into the buffers at Sylhet
 function checkLine() {
+  const tryRecover = () => {
+    if (sim.speed < 0 && sim.station > 0 && sim.missedStations && sim.missedStations.has(sim.station)) {
+      const prevSt = STATIONS[sim.station];
+      if (sim.dist < prevSt.dist + stopWindow(prevSt)[1] + 200) {
+        sim.missedStations.delete(sim.station);
+        sim.station--;
+        sim.nextStop = STATIONS[sim.station + 1].dist;
+        sim.populated.delete(STATIONS[sim.station + 1].index);
+        drive.pts.penalty = Math.min(0, drive.pts.penalty + 400);
+        toast('RECOVERED ' + STATIONS[sim.station + 1].en + ' (+400 PTS)', 'grassLight');
+      }
+    }
+  };
   const st = STATIONS[sim.station + 1];
-  if (!st) return;
+  if (!st) {
+    tryRecover();
+    return;
+  }
   const o = sim.dist - st.dist;
-  if (st.index !== LAST_STATION) { if (o > stopWindow(st)[1] + 40) missStation(true); return; }
+  if (st.index !== LAST_STATION) {
+    tryRecover();
+    if (o > stopWindow(st)[1] + 500 && sim.speed > 5) { missStation(true); return; }
+    return;
+  }
   if (o < BUFFER_O) return;
   const hard = sim.speed > 12, bump = sim.speed > 3;
   sim.dist = st.dist + BUFFER_O;
@@ -3369,6 +3442,7 @@ function checkLine() {
 function missStation(announce) {
   sim.station++;
   sim.nextStop = sim.station < LAST_STATION ? STATIONS[sim.station + 1].dist : Infinity;
+  if (sim.missedStations) sim.missedStations.add(sim.station);
   if (announce) penalty(400, 'MISSED ' + STATIONS[sim.station].en);
 }
 
@@ -3473,13 +3547,19 @@ function driveHint() {
   const st = STATIONS[sim.station + 1];
   if (!st) return '';
   const o = sim.dist - st.dist, w = stopWindow(st);
-  if (sim.speed < 0.3) {
+  if (sim.speed < -0.3) {
+    if (o > w[1]) return 'REVERSING TO PLATFORM (' + Math.round(o - w[1]) + ' M TO GO)';
+    if (o >= w[0]) return 'IN PLATFORM ZONE! BRAKE [↓]';
+    return 'REVERSING - WATCH PLATFORM BEHIND';
+  }
+  if (Math.abs(sim.speed) < 0.3) {
     if (o >= w[0] && o <= w[1]) return 'OPEN THE DOORS [O]';
     if (e === 'OFF') return 'START THE ENGINE [E]';
-    if (o > w[1]) return 'OVERSHOT! DRIVE ON [↑]';
+    if (o > w[1]) return drive.reverser === -1 ? 'REVERSER SET: BACK UP SLOWLY [↑]' : 'OVERSHOT! REVERSE GEAR [R]';
     if (o > -160) return 'CREEP UP ' + Math.ceil(w[0] - o) + ' M [↑]';
     return power;
   }
+  if (o > w[1]) return 'OVERSHOT! BRAKE TO STOP [↓]';
   if (o > -440 && o < w[0]) return 'BRAKE FOR ' + st.en + ' [↓]';
   return '';
 }
@@ -3844,7 +3924,7 @@ function updateSparks(dt) {
 const shake = { x: 0, y: 0 };
 function updateShake(dt) {
   sim.shake = Math.max(0, sim.shake - dt * 2.5);
-  const amp = sim.shake + (sim.onBridge ? 0.9 * sim.bridgeMix * sim.speed / CONFIG.CRUISE_SPEED : 0);
+  const amp = sim.shake + (sim.onBridge ? 0.9 * sim.bridgeMix * Math.abs(sim.speed) / CONFIG.CRUISE_SPEED : 0);
   if (amp < 0.35) { shake.x = shake.y = 0; return; }
   shake.x = Math.round(Math.sin(sim.clock * 41.3) * amp);
   shake.y = Math.round(Math.abs(Math.sin(sim.clock * 29.7 + 1)) * amp * 0.8);
@@ -3888,7 +3968,7 @@ function updateWeather(dt) {
     r.vx = -(sim.speed * r.depth * 0.8) - 30 * r.depth;  // wind plus the train's own speed
     r.x += r.vx * dt;
     r.y += r.vy * dt;
-    if (r.y < r.gy && r.x > -12) { i++; continue; }
+    if (r.y < r.gy && r.x > -12 && r.x < W + 24) { i++; continue; }
     if (r.y >= r.gy && r.depth > 0.95 && r.x >= 0 && r.x < W) {
       const s = poolSpawn(splashPool, cap('SPLASH_MAX'));
       if (s) { s.x = Math.round(r.x); s.y = Math.round(r.gy); s.age = 0; s.water = isWater(s.x, s.y); }
@@ -3977,7 +4057,8 @@ function update(dt) {
   updateUI(dt);
   sim.clock += dt;
   sim.cloudDrift += dt * 1.5;
-  sim.wheelAngle = (sim.wheelAngle + sim.speed * dt / CONFIG.WHEEL_R) % (Math.PI / 2);
+  const turn = Math.PI / 2;
+  sim.wheelAngle = ((sim.wheelAngle + sim.speed * dt / CONFIG.WHEEL_R) % turn + turn) % turn;
   sim.swayPhase += sim.speed * dt * 0.09;
   sim.hornWave = Math.max(0, sim.hornWave - dt);
   updateSmoke(dt);
@@ -4128,7 +4209,7 @@ function buildTitle() {
   drawMask(g, bn, (w - bn.w) >> 1, 20, P.white);
   const route = STATIONS.map(s => s.code).join(' > ') + '   ' + STATIONS[LAST_STATION].km + ' KM';
   drawText(g, route, (w - textWidth(route)) >> 1, 23 + bn.h, P.grayLight);
-  const keys = 'E ENGINE  ↑↓ LEVER  O DOORS  H HORN  L LIGHT';
+  const keys = 'E ENGINE  ↑↓ LEVER  R REV  O DOORS  H HORN';
   drawText(g, keys, (w - textWidth(keys)) >> 1, h - 19, P.slate);
   const foot = '←→ CHOOSE   ENTER START' + (TITLE.best ? '   BEST ' + TITLE.best : '');
   drawText(g, foot, (w - textWidth(foot)) >> 1, h - 11, P.grayLight);
@@ -4178,9 +4259,13 @@ function drawDriveHUD(g) {
   // left: speedometer, limit board, the lever, engine, passengers
   let x = 2, y = 2;
   hudBox(g, x, y, 76, 44);
-  const v = String(Math.round(sim.speed));
+  const v = String(Math.round(Math.abs(sim.speed)));
   drawText2x(g, v, x + 28 - v.length * 8, y + 4, drive.over && blink ? P.red : P.white);
   drawText(g, 'KM/H', x + 30, y + 9, P.grayLight);
+  if (drive.reverser === -1) {
+    rect(g, x + 30, y + 2, 17, 6, P.navy);
+    drawText(g, 'REV', x + 31, y + 2, P.amber);
+  }
   const lim = String(drive.limit);
   rect(g, x + 52, y + 3, 21, 13, P.red);
   rect(g, x + 54, y + 5, 17, 9, P.white);
@@ -4188,7 +4273,7 @@ function drawDriveHUD(g) {
   const ly = y + 18, l = drive.lever;                    // brake steps on the left, power on the right
   for (let n = EB; n <= D.NOTCHES; n++) {
     const cx = x + 4 + (n - EB) * 4, on = l > 0 ? n > 0 && n <= l : l < 0 ? n < 0 && n >= l : n === 0;
-    rect(g, cx, ly, 3, 5, n > 0 ? (on ? P.grassLight : P.greenDeep) : n < 0 ? (on ? (n === EB ? P.red : P.amber) : P.brownDark)
+    rect(g, cx, ly, 3, 5, n > 0 ? (on ? (drive.reverser === -1 ? P.amber : P.grassLight) : P.greenDeep) : n < 0 ? (on ? (n === EB ? P.red : P.amber) : P.brownDark)
                          : on ? P.white : P.grayDark);
     if (n === l) rect(g, cx, ly + 6, 3, 1, P.glow);
   }
@@ -4220,16 +4305,16 @@ function drawDriveHUD(g) {
   } else if (st) {
     const togo = st.dist - sim.dist;
     drawText(g, st.code, x + 4, y + 20, P.white);
-    textRight(g, togo > 400 ? (togo / CONFIG.PX_PER_KM).toFixed(1) + ' KM' : 'STOP ' + Math.round(togo) + ' M', x + 72, y + 20,
-              togo > 400 ? P.white : P.glow);
+    textRight(g, togo < 0 ? 'REV ' + Math.round(-togo) + ' M' : togo > 400 ? (togo / CONFIG.PX_PER_KM).toFixed(1) + ' KM' : 'STOP ' + Math.round(togo) + ' M', x + 72, y + 20,
+              togo > 400 ? P.white : togo < 0 ? P.amber : P.glow);
   }
-  if (!stopped && st && st.dist - sim.dist < 400) {      // stop gauge: the window, the mark, the train
+  if (!stopped && st && (st.dist - sim.dist < 400 && sim.dist - st.dist < 260)) {      // stop gauge: the window, the mark, the train
     const w = stopWindow(st), o = sim.dist - st.dist, bx = x + 4, bw = 68;
-    const at = u => bx + Math.round((Math.max(-160, Math.min(80, u)) + 160) / 240 * (bw - 1));
+    const at = u => bx + Math.round((Math.max(-160, Math.min(120, u)) + 160) / 280 * (bw - 1));
     rect(g, bx, y + 29, bw, 3, P.navy);
-    rect(g, at(w[0]), y + 29, at(w[1]) - at(w[0]) + 1, 3, P.greenDark);
+    rect(g, at(w[0]), y + 29, Math.max(2, at(w[1]) - at(w[0]) + 1), 3, P.greenDark);
     rect(g, at(0), y + 28, 1, 5, P.white);
-    rect(g, at(o) - 1, y + 28, 3, 5, P.glow);
+    rect(g, at(o) - 1, y + 28, 3, 5, o > w[1] ? P.amber : P.glow);
   } else {
     const ahead = speedLimitAt(sim.dist + 320);
     if (!stopped && ahead < drive.limit) drawText(g, 'LIMIT ' + ahead + ' AHEAD', x + 4, y + 28, blink ? P.amber : P.peach);
@@ -4293,11 +4378,11 @@ function drawDebug(g) {
     'TIME  ' + hhmm(sim.hour) + ' ' + TIME_MODES[ui.timeMode][0] + (weather.level > 0.05 ? ' RAIN ' + Math.round(weather.level * 100) : ''),
     'LAND  ' + landLabel() + (sim.onBridge ? ' BRIDGE' : ''),
   ];
-  if (drive.on) lines.push('DRIVE ' + drive.engine + ' ' + leverLabel(drive.lever) + ' RPM ' + Math.round(drive.rpm * 100) +
+  if (drive.on) lines.push('DRIVE ' + drive.engine + (drive.reverser === -1 ? ' [REV]' : '') + ' ' + leverLabel(drive.lever) + ' RPM ' + Math.round(drive.rpm * 100) +
                            ' A ' + drive.accel.toFixed(1), 'TRIP ' + Math.round(drive.tripT) + ' S  OFFSET ' + Math.round(sim.dist - (STATIONS[sim.station + 1] || STATIONS[sim.station]).dist));
   if (timeScale() !== 1) lines.push(ui.paused ? 'PAUSED' : 'SPEED X' + timeScale());
   if (quality.low) lines.push('LOW QUALITY ' + quality.ema.toFixed(1) + ' MS');
-  lines.push('P PAUSE  N NEXT  T TIME  W RAIN  C DRIVE', 'M SOUND  1/2/4 SPEED  R RESTART');
+  lines.push('P PAUSE  N NEXT  T TIME  W RAIN  C DRIVE', 'M SOUND  1/2/4 SPEED  R REV/RESTART');
   const w = Math.max(...lines.map(textWidth)) + 6, h = lines.length * 7 + 4;
   rect(g, 2, 2, w, h, PALETTE.slate);
   rect(g, 3, 3, w - 2, h - 2, PALETTE.ink);
@@ -4388,7 +4473,8 @@ function setMuted(m) {
 function updateAudioBeds(dt) {
   if (!audio.ctx || audio.ctx.state !== 'running' || (audio.bedT += dt) < 0.1) return;
   audio.bedT = 0;
-  const now = audio.ctx.currentTime, run = ui.paused ? 0 : 1, sp = Math.min(1, sim.speed / CONFIG.CRUISE_SPEED) * run;
+  const absSp = Math.abs(sim.speed);
+  const now = audio.ctx.currentTime, run = ui.paused ? 0 : 1, sp = Math.min(1, absSp / CONFIG.CRUISE_SPEED) * run;
   const st = STATIONS[sim.state === 'STOPPED' ? sim.station : Math.min(LAST_STATION, sim.station + 1)];
   const near = Math.max(0, 1 - Math.abs(st.dist - sim.dist) / 500) * Math.min(1, sim.people.length / 8) * run;
   const set = (node, v) => node.gain.setTargetAtTime(v, now, 0.15);
@@ -4409,11 +4495,12 @@ function updateAudioBeds(dt) {
 // Rail joints: every JOINT_PX of travel, the four axles of a carriage click
 // over it in turn - so the rhythm follows the speed exactly
 function trackSound(dt) {
-  sim.jointAcc += sim.speed * dt;
+  const absSp = Math.abs(sim.speed);
+  sim.jointAcc += absSp * dt;
   if (sim.jointAcc < JOINT_PX) return;
   sim.jointAcc -= JOINT_PX;
-  if (!audioOn() || sim.speed < 3) return;
-  const now = audio.ctx.currentTime, rate = sim.speed * timeScale();
+  if (!audioOn() || absSp < 3) return;
+  const now = audio.ctx.currentTime, rate = absSp * timeScale();
   for (let i = 0; i < AXLES.length; i++) playClick(now + 0.02 + AXLES[i] / rate, i === 0 || i === 2);
 }
 
@@ -4652,6 +4739,7 @@ function syncButtons() {
   set('b-mode', null, driving ? 'DRIVE' : 'AUTO', driving, driving ? 'Driver mode on: hand back to autopilot' : 'Drive the train yourself');
   const E = drive.engine;
   set('b-engine', null, E === 'OFF' ? 'START' : E === 'ON' ? 'STOP' : '...', E === 'ON', E === 'OFF' ? 'Start the engine' : 'Stop the engine');
+  set('b-rev', null, drive.reverser === -1 ? 'REV' : 'FWD', drive.reverser === -1, drive.reverser === -1 ? 'Reverse gear: back up slowly (R)' : 'Forward gear (R)');
   set('b-power', null, null, drive.lever > 0, 'Power up, lever ' + leverLabel(drive.lever));
   set('b-brake', null, null, drive.lever < 0, 'Brake, lever ' + leverLabel(drive.lever));
   const closing = sim.state === 'STOPPED' && (sim.stopPhase === 'BOARDING' || sim.stopPhase === 'BOARDED' || sim.stopPhase === 'DOORS_OPEN');
@@ -4672,13 +4760,14 @@ const actions = {
     setMuted(!audio.muted);
   },
   engine() { toggleEngine(); },
+  rev() { toggleReverser(); },
   power() { setLever(drive.lever + 1); },
   brake() { setLever(drive.lever - 1); },
   doors() { toggleDoors(); },
   light() { toggleLight(); },
 };
 for (const [id, act] of [['b-mode', 'mode'], ['b-pause', 'pause'], ['b-speed', 'speed'], ['b-skip', 'skip'], ['b-time', 'time'],
-                         ['b-rain', 'rain'], ['b-mute', 'mute'], ['b-engine', 'engine'], ['b-doors', 'doors'], ['b-light', 'light']])
+                         ['b-rain', 'rain'], ['b-mute', 'mute'], ['b-engine', 'engine'], ['b-rev', 'rev'], ['b-doors', 'doors'], ['b-light', 'light']])
   btn(id).addEventListener('click', () => { unlockAudio(); actions[act](); syncButtons(); });
 
 // Power and brake step once per tap and keep stepping while held; the horn
@@ -4724,6 +4813,7 @@ function driveKey(key) {
   if (ui.complete) return false;
   switch (key) {
     case 'KeyE': toggleEngine(); break;
+    case 'KeyR': toggleReverser(); break;
     case 'ArrowUp': setLever(drive.lever + 1); break;
     case 'ArrowDown': setLever(drive.lever - 1); break;
     case 'KeyB': setLever(EB); break;
